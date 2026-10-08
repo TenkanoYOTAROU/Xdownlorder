@@ -1,0 +1,4036 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GSI DEM Downloader v13-10</title>
+<!-- ===================== GSI DEM Downloader v13-10 =====================
+v13-10 (2026-10-07): 崖プラグインに診断だけを追加(崖の判定・書込・壁置きの動作はv13-9のまま)。(1)書込の前後で全マスの高さを比べ、書いたマスからの距離別に変わったマス数を出す(海岸/内陸別、水マスも)=ゲームの作り変えの広がり。(2)buildBuildingの戻り値(true/false/なし/エラー)を別々に数え、falseの例はisBuildingBuildableも記録。(3)壁を置いたあとにTile.isBuilding/getBuildingDraftで読み戻し。(4)最終地形で「平らどうしで1段以上違う隣」を全部数え、壁の有無・原因別(noWall/dirDropped/planZero/buildFailed/dropMismatch)に集計、平ら対斜面の0.5以上のズレも数える。
+v13-9 (2026-10-07): 崖プラグインの設定だけ変更。v13-8の実機比較で、プラグインを入れたほうが入れない読込直後より見た目が悪かった(段々と紫の細い隙間)ため、崖の対象を大きな段差だけに絞る。CLIFF_MIN_GAME 3→5(ゲーム側の落差5段以上の辺だけ)、CLIFF_ROUNDS 2→1。ロジックはv13-8のまま。うまく見えたら4へ広げる。
+v13-8 (2026-10-07): 崖プラグイン。v13-7の実機ログ(平らにしたマスが隣の斜面マスより高い境目 slopeLower=218 が紫の細い隙間の原因候補)への対策。(1)平らにしたマスの隣の斜面マスで、高さのズレが0.25(CLIFF_SLIVER)以上のものも、そのマスの丸めた高さで平らに書く(最大CLIFF_ROUNDS=2周)。判定は書込後にゲームから読み直した高さで行うので、ゲームが隣を自動で整えるならそれ以上は書かない。(2)City.getStorage()に「適用済み」の目印(cliffwall_done)を保存し、保存して開き直したときの再適用をなくす。(3)診断:書込後に隣の斜面マスの高さが変わったか(neighbor adaptation)、残った隙間の数(live)。
+v13-7 (2026-10-07): 崖プラグイン。v13-6の実機ログ(崖の辺262のうちゲーム側の落差0段が95本・1段が43本・3段以上は48本)を受けて、崖の判定をゲーム側の落差で行う。定数CLIFF_MIN_GAME(初期値3)未満の辺は何もせずゲームの斜面のまま。診断に「平らにしたマスと隣の斜面マスの小数の食い違い(紫の細い隙間の候補)」の数を追加。
+v13-6 (2026-10-07): 崖プラグイン。v13-5の実機ログ(壁を置けない段差162、役割の衝突107)への対策。(1)壁を置けない「平らにした側→未処理の斜面」の段差は、下側の斜面マスをそのゲーム高さ(丸め)で平らに書いて壁を置けるようにする(最大2周)。(2)崖の両側を平らにする歩きは、反対の役割のマスに当たったらそこで止める。(3)平らにしたマスの隣の水マスにも壁を置く。(4)診断:崖の辺のゲーム側落差の分布、追加で平らにしたマス数。※1回適用したらプラグインは外す(保存して開き直すと再適用され、壁のあるマスは高さが書き換わらない)。
+v13-5 (2026-10-07): 崖プラグインの方式を変更。高さ表は「崖の位置と高い側」を決めるためだけに使い、高さはゲーム側の実際の地形(Tile.getTerrainHeight)を読んで使う。崖の両側を崖から離れる向きにCLIFF_WALKマス分、ゲーム側の上段/下段の高さへ平らにし、その間に壁を置く(落差はゲーム側の差、最大WALL_MAX_DROP)。壁の種類は(西北東南の落差)の全組合せ(辺は最大2つ)を用意しLuaが名前で選ぶ。表との食い違いで出ていた紫の穴・浮く緑マスの対策。診断ログ:表の高さ別のゲーム側平均、崖の本数と崖マスの割合、書込の読戻し、壁の数、壁を置けない段差の数。
+v13-4 (2026-10-07): 崖プラグインのLuaの診断を修正。高さ取得は City/Builder ではなく Tile モジュール(Tile.getTerrainHeight / Tile.isLand、公式doc確認)。書き込み前のゲーム側の高さと表の高さの尺度比・水陸の食い違い・書き込み後の一致をログに出す。壁の置き方は v13-3 から変更なし。
+v13-3 (2026-10-07): 崖プラグインのLuaで高さが1マスも書かれていなかった問題(実機ログ heights set: 0)の修正。高さ表を行配列+string.byteで読む方式に変更、書いた数が0なら壁を置かない、読み戻し診断ログを追加。
+v13-2 (2026-10-07): 崖プラグインの出力を「崖のまわり(CLIFF_ZONE_R マス)だけ高さを書く」方式に変更(それ以外は読込時のなめらかな斜面のまま)。書き換え範囲内の段差は落差1から壁を置く。frames のキーを "bitmap"→"bmp" に修正(実機で bitmap は動かなかった)。
+v13-1 (2026-10-06): 「崖プラグインで保存」ボタンを追加。高さ表(0=水,1〜15=陸)・崖の壁(隣との差3段以上)・壁の絵(落差1〜6)・Luaをまとめたプラグインフォルダ入りZIPを出力。PNG/ZIP出力は変更なし。
+v13-0 (2026-10-05): 機能変更なしの整理版。変更履歴の全文は XDownlorder_CHANGELOG.md に移動した。
+【主な仕様(要点)】
+- 出力: DEM(標高)をグレーPNGにして保存。TheoTownの1タイル=10m固定。出力サイズ候補は32/64/128/256/384/512(+1024は繰上げ専用)。
+- 標高→グレー: 陸は THEO_LAND_MIN_GRAY(11)〜THEO_MAX_GRAY(96)。グレー0〜10は水の帯(NoDataは0・alpha=0)。
+- 面平均化 K=2(出力セルをK×Kの点で評価、有効率50%未満はNoData)。サブサンプル間の標高差が CLIFF_THRESHOLD_M(3m)以上なら平均せず高い側を採用(崖・護岸)。
+- 水路補完 WATER_GAP_CLOSE: 部分的にNoDataの陸セルが、反対側の隣接2セルとも水なら水にする。
+- 地図UI: 基点/終点は長押し(LOCK_LONGPRESS_MS=1000)、距離固定は🔓/🔒ボタン、拡大鏡あり。
+【予定】崖プラグイン出力(崖の基準=隣り合うマスの高さの差が3段以上)。
+====================================================== -->
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="preconnect" href="https://cyberjapandata.gsi.go.jp" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#111; --panel:#181818; --line:#333; --text:#eee; --sub:#999;
+  --btn:#d8d8d8; --btn-text:#111;
+  --red:#e04b4b;
+  --warn-bg:#3a300d; --warn-border:#806b16; --warn-text:#ffe89b;
+  --danger-bg:#3a1414; --danger-border:#7a2a2a; --danger-text:#ffb3b3;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif}
+header{padding:10px 14px;border-bottom:1px solid var(--line)}
+h1{font-size:16px;margin:0}
+main{display:grid;grid-template-columns:minmax(300px,1fr) 360px;min-height:calc(100vh - 45px)}
+@media(max-width:850px){main{display:block}}
+
+/* ---------- map ---------- */
+#mapWrap{
+  position:relative;background:#1c2b1c;min-height:60vh;overflow:hidden;
+  user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
+}
+#mapWrap.desktop-tall{min-height:calc(100vh - 45px)}
+@media(max-width:850px){
+  #mapWrap.desktop-tall{min-height:0}
+  #mapWrap{min-height:0}
+}
+#mapArea{
+  position:relative;width:100%;height:100%;overflow:hidden;
+}
+#map{position:absolute;inset:0;touch-action:manipulation;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.frame{
+  position:absolute;
+  border:1px dashed var(--red);
+  box-shadow:0 0 0 9999px rgba(0,0,0,.12) inset;
+  pointer-events:none;
+  z-index:1;
+}
+.frame.locked{border-style:solid}
+#previewRect{
+  position:absolute;
+  background:rgba(40,167,69,0.25);
+  border:2px solid rgba(40,167,69,0.6);
+  pointer-events:none;
+  z-index:1;
+  display:none;
+}
+#previewRect.show{display:block}
+#axisCandidateLine{
+  position:absolute;
+  background:rgba(255,193,7,.9);
+  box-shadow:0 0 4px rgba(0,0,0,.6);
+  pointer-events:none;
+  z-index:2;
+  display:none;
+}
+.anchorPin{
+  position:absolute;width:18px;height:18px;border-radius:50%;
+  background:#e04b4b;border:3px solid #fff;box-shadow:0 0 8px rgba(0,0,0,.9);
+  transform:translate(-50%,-50%);
+  pointer-events:none;display:none;z-index:15;
+}
+.anchorPin.highlight{
+  box-shadow:0 0 0 4px #fff, 0 0 12px rgba(0,0,0,.95);
+}
+#anchorPin{pointer-events:auto;cursor:pointer;background:#e04b4b}
+#pendingPin{background:#28a745}
+#endPin{background:#007bff;pointer-events:auto;cursor:pointer}
+.lockStatusText.idle{color:var(--sub);font-weight:400}
+.lockStatusText{font-size:12px;color:#fff;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1 1 auto;min-width:0;text-align:center}
+.lockConfirmBtns{display:flex;gap:6px;justify-content:center;align-items:center;flex:0 0 auto}
+.lockConfirmBtns button{
+  border:0;border-radius:7px;padding:4px 10px;font-size:12px;font-weight:700;
+  cursor:pointer;background:var(--btn);color:var(--btn-text);white-space:nowrap;
+}
+.lockConfirmBtns button#lockNoBtn{background:#333;color:#eee}
+.lockConfirmBtns button:disabled{opacity:.4;cursor:not-allowed}
+.center-mark{
+  position:absolute;transform:translate(-50%,-50%);
+  font-size:19px;color:#000;font-weight:700;pointer-events:none;
+  text-shadow:0 0 4px rgba(0,0,0,.6);
+  user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
+  z-index:2;
+}
+.mapControls{
+  position:absolute;left:0;right:0;
+  display:flex;flex-direction:row;justify-content:center;align-items:center;gap:8px;
+  padding:0 8px;
+  z-index:2;
+}
+#lockControls.active-guidance{
+  background:#181818cc;
+  border:1px solid #444;
+  border-radius:8px;
+  height:27px;
+}
+.magnifier{
+  position:absolute;
+  border-radius:8px;
+  border:none;box-shadow:0 4px 14px rgba(0,0,0,.5);
+  overflow:hidden;background:#222;pointer-events:auto;touch-action:none;
+  transform:none;
+  display:none;
+  z-index:20;
+}
+.magnifier.show{display:block}
+#loupeMapEl{position:absolute;inset:0;}
+#loupeOverlayCanvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;}
+
+/* ---------- panel ---------- */
+.panel{padding:12px;background:var(--panel);border-left:1px solid var(--line);overflow:auto}
+section{border:1px solid var(--line);border-radius:10px;padding:11px;margin-bottom:10px}
+h2{font-size:13px;margin:0 0 6px;color:#ccc}
+label{display:block;font-size:12px;color:#ccc;margin:6px 0 3px}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+input,select{
+  width:100%;font:inherit;background:#0e0e0e;color:#eee;border:1px solid #444;
+  border-radius:7px;padding:6px 8px;height:32px;font-size:13px;
+}
+.stats{font-size:11px;line-height:1;color:#ccc}
+.tight{margin-top:2px}
+.resLine{font-size:10px;color:var(--sub);text-align:center;margin-top:8px}
+
+.inputWithUnit{position:relative}
+.inputWithUnit input{padding-right:26px;text-align:center}
+.inputWithUnit .unit{
+  position:absolute;right:9px;top:50%;transform:translateY(-50%);
+  font-size:12px;color:#999;pointer-events:none;
+}
+.inputWithUnit input.side-locked{border-color:#28a745;color:#28a745}
+.sideLockRow{display:flex;gap:0;align-items:stretch}
+.sideLockRow .inputWithUnit{flex:1}
+.sideLockRow .inputWithUnit input{border-top-right-radius:0;border-bottom-right-radius:0;border-right:none}
+.sideLockBtn{
+  flex:0 0 30px;width:30px;height:26px;border:1px solid #444;border-left:1px solid #333;
+  border-top-left-radius:0;border-bottom-left-radius:0;border-top-right-radius:7px;border-bottom-right-radius:7px;
+  background:#0e0e0e;color:#aaa;font-size:13px;line-height:1;cursor:pointer;padding:0;
+}
+.sideLockBtn.active{background:#28a745;color:#fff;border-color:#28a745}
+#side{height:26px;padding:4px 8px}
+#sizeBtn{height:26px;padding:4px 8px}
+
+.dropdown{position:relative}
+.dropdown-btn{
+  width:100%;text-align:center;font:inherit;background:#0e0e0e;color:#eee;
+  border:1px solid #444;border-radius:7px;padding:6px 8px;height:32px;font-size:13px;cursor:pointer;
+}
+.dropdown-list{
+  position:absolute;left:0;right:0;top:calc(100% + 3px);z-index:5;
+  background:#161616;border:1px solid #444;border-radius:7px;overflow:hidden;display:none;
+}
+.dropdown-list.open{display:block}
+.dropdown-item{padding:7px 8px;font-size:13px;color:#eee;cursor:pointer;text-align:center}
+.dropdown-item:hover{background:#232323}
+
+.demtags{display:flex;gap:4px;margin-top:8px;flex-wrap:nowrap;overflow:hidden}
+.demtag{
+  flex:1;text-align:center;font-size:10px;padding:4px 2px;border:1px solid #444;
+  border-radius:6px;background:#151515;color:#aaa;white-space:nowrap;
+  font-family:inherit;cursor:pointer;
+}
+.demtag.active{background:var(--btn);color:var(--btn-text);border-color:var(--btn)}
+.demtag .demRecommend{font-weight:400;opacity:.75;margin-left:2px}
+
+.divider{border-top:1px solid var(--line);margin:11px -11px;}
+
+.btnrow{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px}
+button.action{
+  border:0;border-radius:8px;height:34px;background:var(--btn);color:var(--btn-text);
+  font-weight:700;font-size:13px;cursor:pointer;
+}
+button.action:disabled{opacity:.4;cursor:not-allowed}
+button.action.sub{width:100%;height:28px;margin-top:8px;background:#2a2a2a;color:#ccc;font-weight:400;font-size:12px}
+.mapStyleRow{position:relative;margin-top:6px}
+.styleBtns{display:flex;gap:4px;margin:0 auto}
+.styleBtn,.elevBtn{
+  flex:1;text-align:center;font-size:10px;padding:4px 2px;border:1px solid #444;
+  border-radius:6px;background:#151515;color:#aaa;white-space:nowrap;
+  font-family:inherit;cursor:pointer;
+}
+.styleBtn.active,.elevBtn.active{background:var(--btn);color:var(--btn-text);border-color:var(--btn)}
+#mapCredit{position:absolute;left:0;right:0;text-align:center;font-size:7px;line-height:1.2;color:var(--sub);margin-top:0;z-index:2}
+.elev-badge{
+  position:absolute;display:none;z-index:2;pointer-events:none;
+  padding:2px 6px;border-radius:6px;background:rgba(0,0,0,.68);color:#fff;
+  font-size:12px;font-weight:700;line-height:1.3;white-space:nowrap;
+  user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;transition:opacity .15s;
+}
+.elev-badge.stale{opacity:.55}
+
+/* ---------- progress / report ---------- */
+.progressGrid{
+  display:grid;grid-template-columns:1fr auto;align-items:center;
+  column-gap:10px;row-gap:0;
+}
+.bartrack{height:7px;background:#333;border-radius:5px;overflow:hidden}
+#bar{height:100%;background:#ddd;transition:width .2s}
+.pgLabel{
+  font-size:11px;color:#ddd;font-family:ui-monospace,Menlo,Consolas,monospace;white-space:nowrap;
+}
+.warnbox{padding:8px;border-radius:8px;font-size:11px;margin:6px 0}
+.warnbox.caution{background:var(--warn-bg);border:1px solid var(--warn-border);color:var(--warn-text)}
+.warnbox.danger{background:var(--danger-bg);border:1px solid var(--danger-border);color:var(--danger-text)}
+
+.reportgrid{display:grid;grid-template-columns:auto 1fr;gap:0px 10px;font-size:11px;color:#888;line-height:1.25}
+.reportgrid dt{color:#888}
+.reportgrid dd{margin:0;white-space:nowrap;overflow-x:auto}
+
+.tilebox{margin-top:2px;font-size:11px;line-height:1.25;overflow-x:auto;color:#888}
+.tilehead{margin-top:2px;font-family:ui-monospace,Menlo,Consolas,monospace}
+.tilestat-row{
+  display:grid;
+  grid-template-columns: auto minmax(24px, auto) auto minmax(24px, auto) auto minmax(24px, auto) minmax(60px, auto);
+  column-gap:2px;
+  row-gap:0;
+  align-items:center;
+  font-size:11px;
+  white-space:nowrap;
+  min-width:max-content;
+}
+.tilestat-row span{white-space:nowrap}
+.tilestat-row .c1{text-align:right}
+.tilestat-row .c2{text-align:left;font-family:ui-monospace,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums;padding-right:2px}
+.tilestat-row .c3{text-align:right}
+.tilestat-row .c4{text-align:left;font-family:ui-monospace,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums;padding-right:2px}
+.tilestat-row .c5{text-align:right}
+.tilestat-row .c6{text-align:left;font-family:ui-monospace,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums;padding-right:2px}
+.tilestat-row .c7{text-align:left;font-size:11px}
+</style>
+</head>
+<body>
+<header><h1>GSI DEM Downloader</h1></header>
+<main>
+
+<div id="mapWrap" class="desktop-tall">
+  <div id="mapArea">
+    <div id="map"></div>
+    <div class="frame" id="fixedFrame"></div>
+    <div id="previewRect"></div>
+    <div id="axisCandidateLine"></div>
+    <div class="center-mark" id="centerMark">＋</div>
+    <div class="elev-badge" id="elevBadge"></div>
+    <div class="magnifier" id="magnifier"><div id="loupeMapEl"></div><canvas id="loupeOverlayCanvas"></canvas></div>
+    <div class="anchorPin" id="anchorPin"></div>
+    <div class="anchorPin" id="pendingPin"></div>
+    <div class="anchorPin" id="endPin"></div>
+  </div>
+  <div class="mapStyleRow" id="mapStyleRow">
+    <div class="styleBtns" id="styleBtns">
+      <button type="button" class="styleBtn" data-style="pale">淡色</button>
+      <button type="button" class="styleBtn" data-style="std">標準</button>
+      <button type="button" class="styleBtn" data-style="relief">色別標高</button>
+      <button type="button" class="styleBtn" data-style="osm">OSM</button>
+      <button type="button" class="elevBtn" id="elevBtn" aria-pressed="false" title="中心＋の標高を表示">標高</button>
+    </div>
+  </div>
+  <div class="mapControls" id="lockControls">
+    <span class="lockStatusText idle" id="lockStatusText"></span>
+    <div class="lockConfirmBtns" id="lockConfirmBtns" style="display:none">
+      <button id="lockYesBtn" type="button">はい</button>
+      <button id="lockNoBtn" type="button">やり直し</button>
+    </div>
+  </div>
+  <div class="resLine" id="mapCredit"></div>
+</div>
+
+<div class="panel">
+
+<section>
+<h2>取得範囲 / 出力設定</h2>
+<div class="row2">
+  <div>
+    <label>1 辺の距離</label>
+    <div class="sideLockRow">
+      <div class="inputWithUnit"><input id="side" type="number" value="1000" min="100" max="100000" step="1" readonly><span class="unit">m</span></div>
+      <button type="button" id="sideLockBtn" class="sideLockBtn" title="タップで距離固定/解除">🔓</button>
+    </div>
+  </div>
+  <div>
+    <label>出力サイズ</label>
+    <div class="dropdown">
+      <button type="button" class="dropdown-btn" id="sizeBtn">128×128</button>
+      <div class="dropdown-list" id="sizeList">
+        <div class="dropdown-item" data-value="32">32×32</div>
+        <div class="dropdown-item" data-value="64">64×64</div>
+        <div class="dropdown-item" data-value="128">128×128</div>
+        <div class="dropdown-item" data-value="256">256×256</div>
+        <div class="dropdown-item" data-value="384">384×384</div>
+        <div class="dropdown-item" data-value="512">512×512</div>
+        <div class="dropdown-item" data-value="1024">1024×1024</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="resLine">出力解像度：<span id="resSize">1024×1024</span>  1px ≒ <span id="mpp">1.0</span>m</div>
+
+<div class="demtags" id="demModeBtns">
+  <button type="button" class="demtag" data-dem="1a">1A優先</button>
+  <button type="button" class="demtag" data-dem="5a">5Aから選択<span class="demRecommend">(推奨)</span></button>
+</div>
+
+<div class="divider"></div>
+
+<div class="btnrow">
+  <button class="action" id="pngBtn">PNG を作成</button>
+  <button class="action" id="zipBtn" disabled>ZIP で保存</button>
+</div>
+<button class="action sub" id="cliffBtn" type="button" disabled>崖プラグインで保存</button>
+<button class="action sub" id="showInfoBtn" type="button">状態をコピー</button>
+
+</section>
+
+<!-- ============ 進捗 / 完了レポート (排他表示) ============ -->
+<section>
+
+  <div id="progressView">
+    <h2>進捗</h2>
+    <div class="progressGrid">
+      <div class="bartrack"><div id="bar" style="width:0%"></div></div>
+      <div class="pgLabel" id="pgPct">全体進捗：0.0%</div>
+      <div></div>
+      <div class="pgLabel" id="pgTime">経過時間：00:00</div>
+    </div>
+    <div class="stats tight" id="pgDetail" style="min-height:2.8em;margin-top:6px;line-height:1"></div>
+  </div>
+
+  <div id="reportView" style="display:none">
+    <h2>完了レポート</h2>
+    <div class="warnbox" id="warnBox" style="display:none"></div>
+    <dl class="reportgrid">
+      <dt>使用 DEM</dt><dd id="usedDemLine"></dd>
+      <dt>混在統合</dt><dd id="mixedLine"></dd>
+      <dt>標高範囲</dt><dd id="elevRangeLine"></dd>
+      <dt>出力</dt><dd id="outputLine"></dd>
+      <dt>1px</dt><dd id="mppLine"></dd>
+      <dt>有効</dt><dd id="validLine"></dd>
+      <dt>NoData</dt><dd id="nodataLine"></dd>
+      <dt>実測有効率</dt><dd id="validPctLine"></dd>
+      <dt>実測空白率</dt><dd id="blankPctLine"></dd>
+    </dl>
+
+    <div class="tilebox" id="tileBox"></div>
+  </div>
+
+</section>
+
+</div>
+</main>
+
+<script fetchpriority="high" src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script>
+"use strict";
+
+/* ===================== 定数・データソース ===================== */
+// 解像度(z値)が高い順=優先したいデータソース順
+const SOURCES_ALL = [
+  {name:"DEM1A", path:"dem1a_png", z:17, nominal:1, timeoutMs:75000},
+  {name:"DEM5A", path:"dem5a_png", z:15, nominal:5, timeoutMs:30000},
+  {name:"DEM5B", path:"dem5b_png", z:15, nominal:5, timeoutMs:30000},
+  {name:"DEM5C", path:"dem5c_png", z:15, nominal:5, timeoutMs:30000},
+  {name:"DEM10B", path:"dem_png", z:14, nominal:10, timeoutMs:30000}
+];
+const NODATA = 8388608;
+
+// DEM優先モード:「1A優先」=DEM1Aから試す(従来どおり) /「5Aから選択」=DEM1Aを使わず5A/B/C→10Bのみ(既定・推奨)。
+// DEM1Aは整備済みエリアが限定的なため、既定は5Aからの選択にしている。
+const DEM_MODE_KEY="xdler_dem_mode";
+let demMode="5a";
+try{ if(localStorage.getItem(DEM_MODE_KEY)==="1a") demMode="1a"; }catch(e){}
+function activeSources(){ return demMode==="1a" ? SOURCES_ALL : SOURCES_ALL.filter(s=>s.name!=="DEM1A"); }
+
+// 中心＋の標高表示(状態は早めに宣言しておく)
+const ELEV_STORAGE_KEY="xdler_elev_on";
+const ELEV_TIMEOUT_MS=4000, ELEV_CACHE_MAX=30, ELEV_NEG_MAX=5000;
+const elevTileCache=new Map();   // "path/z/x/y" → 取得済みタイル(古い順に削除)
+const elevNegCache=new Set();    // 範囲外(404)・全域NoDataのタイル。再取得しない
+let elevOn=false, elevToken=0, elevTimer=null, elevAbort=null;
+const THEO_LEVELS = 15;
+const THEO_MAX_GRAY = 96;
+const CLIFF_THRESHOLD_M = 3; // 崖・護岸判定閾値(m)。実DEM5A解析で通常斜面(1px差<1m)と崖(1px差5〜15m)の間の空白域(2.4〜4.75m)から設定
+const THEO_NODATA_GRAY = 0;
+const THEO_LAND_MIN_GRAY = 11; // 水位固定:陸の最低グレー。実機テストで水/陸の境界はグレー10|11と確定済み(陸は必ず11以上)
+const WATER_GAP_CLOSE = true; // 細い水路の途切れ補完(v12-15)
+// ---- 崖プラグイン出力(v13-1) ----
+const CLIFF_LAND_BASE_H = 1;   // 陸の最低ゲーム高さ(PNGの段0→高さ1、段14→高さ15)。水/NoDataは0
+const CLIFF_STEPS = 3;         // 隣り合うマスの高さの差がこの段数以上なら崖(壁を置く)
+const CLIFF_WALK = 4;          // 崖の両側で、崖から離れる向きに何マス分(崖のマス自身を含む)ゲームの斜面を平らにするか(v13-5)
+const CLIFF_MIN_GAME = 5;     // v13-7: ゲーム側の落差(上段-下段)がこの段数未満の崖の辺は何もしない(ゲームのなだらかな斜面のまま)。v13-9で3→5。4にすると崖が増える
+const CLIFF_ROUNDS = 1;       // v13-8: 壁を置けない段差/小数のズレの境目の斜面マスを平らにする周回数(増やすと隙間は減るが段々の範囲が広がる)
+const CLIFF_SLIVER = 0.25;    // v13-8: 平らにしたマスと隣の斜面マスの高さのズレがこの値以上なら、その斜面マスも平らにする
+const WALL_MAX_DROP = 6;       // 壁の絵を用意する最大落差(実機確認済みは1〜6。超える分は6に丸める)
+const WALL_W = 32, WALL_H = 96; // 壁の絵のサイズ(96=落差6の壁72px+タイル上半分8px+下余白8px+余裕)
+const WALL_PAD = 8;            // 絵の下端からタイル下端(最下頂点)までのpx
+const WALL_STEP_PX = 12;       // 落差1段あたりの壁の高さpx
+const EARTH_R = 6378137;
+const WEBMERC_K = 78271.51696402048; // MapLibre GL JSはタイル512px基準のズーム定義のため、256px基準の値(156543...)の半分
+
+/* ===================== DOM要素参照・状態 ===================== */
+const el=id=>document.getElementById(id);
+const sideEl=el("side");
+const sideLockBtnEl=el("sideLockBtn");
+const pngBtnEl=el("pngBtn"), zipBtnEl=el("zipBtn"), showInfoBtnEl=el("showInfoBtn"), cliffBtnEl=el("cliffBtn");
+const barEl=el("bar"), pgPctEl=el("pgPct"), pgTimeEl=el("pgTime"), pgDetailEl=el("pgDetail");
+const progressViewEl=el("progressView"), reportViewEl=el("reportView");
+const warnBoxEl=el("warnBox");
+const usedDemLineEl=el("usedDemLine"), mixedLineEl=el("mixedLine"), elevRangeLineEl=el("elevRangeLine");
+const outputLineEl=el("outputLine"), mppLineEl=el("mppLine"), validLineEl=el("validLine");
+const nodataLineEl=el("nodataLine"), validPctLineEl=el("validPctLine"), blankPctLineEl=el("blankPctLine");
+const tileBoxEl=el("tileBox");
+const resSizeEl=el("resSize"), mppSpanEl=el("mpp");
+const sizeBtnEl=el("sizeBtn"), sizeListEl=el("sizeList");
+const magnifierEl=el("magnifier");
+const mapWrapEl=el("mapWrap"), mapAreaEl=el("mapArea"), frameEl=el("fixedFrame"), centerMarkEl=el("centerMark");
+const mapStyleRowEl=el("mapStyleRow");
+const lockControlsEl=el("lockControls"), anchorPinEl=el("anchorPin");
+const pendingPinEl=el("pendingPin"), endPinEl=el("endPin");
+const previewRectEl=el("previewRect");
+const axisCandidateLineEl=el("axisCandidateLine");
+const mapCreditEl=el("mapCredit");
+const elevBadgeEl=el("elevBadge"), elevBtnEl=el("elevBtn");
+
+let currentSize=128;
+let centerLat=35.681236, centerLon=139.767125; // 取得範囲の中心(通常時は地図と同期、確定後は抽出範囲の中心)
+let currentLoupeSize = 96;
+let frameSizePx = 350;
+let lastPNG=null, lastJSON=null, lastHeights=null, lastHeightsN=0; // lastHeights: 崖プラグイン用の高さ表(0=水/NoData, 1〜15=陸)
+let lastRun=null;       // 直近の生成結果が対応する範囲 {lat,lon,side,size}
+let isRunning=false;    // 二重実行防止
+
+mapWrapEl.addEventListener("contextmenu", e => e.preventDefault());
+
+function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+function deg2rad(v){return v*Math.PI/180;}
+function rad2deg(v){return v*180/Math.PI;}
+// 手入力・ズーム同期の双方で同じ値域(100〜100000m)に正規化する
+function clampSideValue(v){
+  let n=Math.round(+v);
+  if(!isFinite(n)) n=1000;
+  return clamp(n,100,100000);
+}
+
+function zoomForSide(Lm,lat,customSizePx){
+  const targetPx = customSizePx || frameSizePx;
+  const raw=Math.log2(WEBMERC_K*Math.cos(deg2rad(lat))*targetPx/Math.max(1,Lm));
+  // 0〜22のクランプ範囲外だと指定距離と実際の表示が食い違うので知らせる
+  if(raw<0 || raw>22) showMapErrorBanner("指定距離が表示可能な範囲外のため、ズームを制限して表示しています");
+  return clamp(raw,0,22);
+}
+
+function layoutOverlay(){
+  const w=mapWrapEl.clientWidth;
+  const ctrlHeight = 27;
+  if(!w) return;
+
+  const viewSize = Math.max(1, Math.floor(w));
+  const margin = 10;
+  const frameSize = Math.max(1, viewSize - margin * 2);
+
+  frameSizePx = frameSize;
+
+  if(mapAreaEl){
+    mapAreaEl.style.width = viewSize + "px";
+    mapAreaEl.style.height = viewSize + "px";
+  }
+
+  // 地図スタイルボタン行の幅を、右パネルのdemtagボタン行(1A優先/5Aから)に揃える
+  const demTagsEl = document.getElementById("demModeBtns");
+  const styleBtnsRowEl = document.getElementById("styleBtns");
+  if(demTagsEl && styleBtnsRowEl){
+    const demW = demTagsEl.getBoundingClientRect().width;
+    if(demW>0) styleBtnsRowEl.style.maxWidth = demW + "px";
+  }
+
+  const buttonGap = -2;   // ガイダンスバーとコピーライトの間の余白
+  const barTopGap = 1;   // スタイル行下端とガイダンスバーの間の余白
+  // mapStyleRow(地図スタイル行)はmapArea直後の通常フローに置いているので、
+  // 実際の高さはoffsetTop/offsetHeightから読む(出典表示の折り返し等があっても崩れない)
+  const guidanceTop = mapStyleRowEl ? (mapStyleRowEl.offsetTop + mapStyleRowEl.offsetHeight + barTopGap) : viewSize + barTopGap;
+
+  // コピーライト表示はガイダンスバーのさらに下に配置する
+  const creditTop = guidanceTop + ctrlHeight + buttonGap;
+  if(mapCreditEl){
+    mapCreditEl.style.top = creditTop + "px";
+  }
+  const creditGap = 2, creditHeight = mapCreditEl ? (mapCreditEl.offsetHeight || 10) : 10;
+  const needed = creditTop + creditGap + creditHeight;
+  mapWrapEl.style.height = needed + "px";
+
+  frameEl.style.width=frameSize+"px";
+  frameEl.style.height=frameSize+"px";
+  frameEl.style.left=margin+"px";
+  frameEl.style.top=margin+"px";
+
+  centerMarkEl.style.left=(viewSize/2)+"px";
+  centerMarkEl.style.top=(viewSize/2)+"px";
+  elevBadgeEl.style.left=(viewSize/2+12)+"px";
+  elevBadgeEl.style.top=(viewSize/2+8)+"px";
+
+  lockControlsEl.style.top=guidanceTop+"px";
+  lockControlsEl.style.width="calc(100% - 16px)";
+  lockControlsEl.style.left="8px";
+}
+
+function frameBoundsInMap(){
+  const fr=frameEl.getBoundingClientRect(), mr=map.getContainer().getBoundingClientRect();
+  const left=fr.left-mr.left, top=fr.top-mr.top;
+  return {left,top,right:left+fr.width,bottom:top+fr.height,width:fr.width,height:fr.height};
+}
+
+layoutOverlay();
+
+// resizeとResizeObserverの重複処理を1本化。2辺固定のズーム調整中は、リサイズ後にpadding(=枠の角への中心合わせ)を再計算する
+function onLayoutChange(){
+  layoutOverlay();
+  if(lockStage>=4){
+    if(map.loaded()) map.resize();
+    if(lockStage===4) updatePreviewRect();
+    if(lockStage===5) showCleanView();
+  }else if(twoEdge && lockStage===2){
+    if(map.loaded()) map.resize();
+    map.setPadding(twoEdgePadding());
+    updateMapView();
+  }else{
+    updateMapView();
+    if(map.loaded()) map.resize();
+  }
+}
+window.addEventListener("resize",onLayoutChange);
+if(typeof ResizeObserver!=="undefined"){
+  new ResizeObserver(onLayoutChange).observe(mapWrapEl);
+}
+
+// TheoTownの実際のマップサイズ(タイル数)。1タイル=10m固定(2026-09-22実機検証で確定。テスト7+新規マップ「大きさ」選択肢の面積表示から算出)。
+// 出力サイズ候補。32〜512はTheoTownの実際のマップサイズ(1タイル=10m固定)。1024はTheoTown側に対応するマップサイズは存在しないが、
+// 「あえて広い範囲を高px出力し、TheoTownの自動縮小(取込み時に512へ縮小)に委ねる」ための繰り上げ専用候補(2026-09-22実測:この方が地形の再現度が高い)。
+const THEOTOWN_MAP_SIZES = [32, 64, 128, 256, 384, 512, 1024];
+function getRecommendedSize(L){
+  const idealTiles = L / 10; // 10m/タイル
+  const idx = THEOTOWN_MAP_SIZES.findIndex(size => size >= idealTiles);
+  if(idx === -1) return THEOTOWN_MAP_SIZES[THEOTOWN_MAP_SIZES.length - 1]; // 1024を超える場合は1024で頭打ち
+  const fit = THEOTOWN_MAP_SIZES[idx];
+  if(fit === idealTiles) return fit; // ちょうど一致(縮小が発生しない)場合は据置
+  // 縮小(切り上げ)が発生する場合、一段階大きい候補があればそちらを推奨する
+  // (2026-09-22実測:TheoTown取込み時の自動縮小の方が、ダウンローダー側の点サンプリングより地形の再現度が高いため)
+  const bump = THEOTOWN_MAP_SIZES[idx + 1];
+  return bump !== undefined ? bump : fit;
+}
+
+function updateRecommendedSizeInList(){
+  const L = clampSideValue(sideEl.value);
+  const rec = getRecommendedSize(L);
+  sizeListEl.querySelectorAll(".dropdown-item").forEach(item => {
+    const val = +item.dataset.value;
+    item.textContent = `${val}×${val}` + (val === rec ? "（推奨）" : "");
+  });
+}
+
+sizeBtnEl.addEventListener("click",e=>{
+  e.stopPropagation();
+  updateRecommendedSizeInList();
+  sizeListEl.classList.toggle("open");
+});
+
+sizeListEl.querySelectorAll(".dropdown-item").forEach(item=>{
+  item.addEventListener("click",()=>{
+    currentSize=+item.dataset.value;
+    sizeBtnEl.textContent=`${currentSize}×${currentSize}`;
+    sizeListEl.classList.remove("open");
+    updateMapView();
+  });
+});
+document.addEventListener("click",()=>sizeListEl.classList.remove("open"));
+
+if(typeof maplibregl === "undefined"){
+  document.getElementById("map").innerHTML='<div style="padding:24px;color:#fff;font-size:14px">地図ライブラリを読み込めませんでした。インターネット接続を確認して再読み込みしてください。</div>';
+  throw new Error("MapLibre GL JS could not be loaded");
+}
+// 地図タイル(画像タイル)。地理院タイルとOSMタイルは出典表示が利用条件。地図上ではなくパネルの出典行に表示する
+const TILE_STYLES={
+  pale  :{tiles:"https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png",   maxzoom:18, credit:"地図・標高データ: 国土地理院"},
+  std   :{tiles:"https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png",    maxzoom:18, credit:"地図・標高データ: 国土地理院"},
+  osm   :{tiles:"https://tile.openstreetmap.org/{z}/{x}/{y}.png",             maxzoom:19, credit:"地図: © OpenStreetMap contributors / 標高データ: 国土地理院"},
+  relief:{tiles:"https://cyberjapandata.gsi.go.jp/xyz/relief/{z}/{x}/{y}.png", maxzoom:15, credit:"地図・標高データ: 国土地理院(色別標高図)"}
+};
+// 旧版(OpenFreeMap対応版)の保存値(liberty等・自動フォールバックで保存されたosm)を引き継がないよう、キーを変えている
+const STYLE_STORAGE_KEY="xdler_map_style_v10";
+// 本体地図とルーペ用地図でオブジェクトを共有しないよう、毎回新しく作る。maxzoom超は拡大表示(ルーペの高ズームでも途切れない)
+function styleFor(key){
+  const s=TILE_STYLES[key];
+  return {version:8,
+    sources:{base:{type:"raster",tiles:[s.tiles],tileSize:256,maxzoom:s.maxzoom}},
+    layers:[{id:"base",type:"raster",source:"base"}]};
+}
+function isValidStyleKey(k){ return Object.prototype.hasOwnProperty.call(TILE_STYLES,k); }
+let currentStyleKey="pale";
+try{
+  const saved=localStorage.getItem(STYLE_STORAGE_KEY);
+  if(isValidStyleKey(saved)) currentStyleKey=saved;
+}catch(e){}
+
+// 前回終了した地図の位置とズームを復元する(保存が無い・壊れている場合は初期値のまま)
+const VIEW_STORAGE_KEY="xdler_last_view_v11";
+try{
+  const v=JSON.parse(localStorage.getItem(VIEW_STORAGE_KEY)||"null");
+  if(v && [v.lat,v.lon,v.zoom].every(n=>typeof n==="number" && isFinite(n)) && Math.abs(v.lat)<=85 && Math.abs(v.lon)<=180 && v.zoom>=0 && v.zoom<=22){
+    centerLat=v.lat; centerLon=v.lon;
+    // 地図のズームは「1辺の距離」から決まるので、保存したズームに相当する距離を入れる
+    sideEl.value=clampSideValue(WEBMERC_K*Math.cos(deg2rad(v.lat))*frameSizePx/Math.pow(2,v.zoom));
+  }
+}catch(e){}
+
+const map = new maplibregl.Map({
+  container:"map",
+  style:styleFor(currentStyleKey),
+  center:[centerLon,centerLat],
+  zoom:zoomForSide(clampSideValue(sideEl.value),centerLat),
+  fadeDuration:0,
+  preserveDrawingBuffer:true,
+  attributionControl:false,
+  dragRotate:false,
+  pitchWithRotate:false,
+  maxPitch:0
+});
+// 回転すると枠が北状態でなくなり、取得範囲(北上の正方形)とずれるため、タッチ・キーボードの回転も無効化する
+map.touchZoomRotate.disableRotation();
+map.keyboard.disableRotation();
+
+let programmaticZoom=false;
+let lastMapError="";
+let mapErrorBannerEl=null, mapErrorBannerTimer=null;
+let mapErrorLastMessage="", mapErrorLastShownAt=0;
+
+function showMapErrorBanner(msg){
+  if(!mapErrorBannerEl){
+    mapErrorBannerEl=document.createElement("div");
+    mapErrorBannerEl.id="mapErrorBanner";
+    mapErrorBannerEl.style.cssText="position:absolute;left:0;right:0;top:0;padding:6px 10px;background:#b33;color:#fff;font-size:12px;text-align:center;z-index:30;pointer-events:none;";
+    mapAreaEl.appendChild(mapErrorBannerEl);
+  }
+  const now=Date.now();
+  if(msg===mapErrorLastMessage && now-mapErrorLastShownAt<2000) return;
+  mapErrorLastMessage=msg; mapErrorLastShownAt=now;
+  mapErrorBannerEl.textContent=msg;
+  mapErrorBannerEl.style.display="block";
+  clearTimeout(mapErrorBannerTimer);
+  mapErrorBannerTimer=setTimeout(()=>{ mapErrorBannerEl.style.display="none"; },8000);
+}
+map.on("error",(e)=>{
+  const err=e && e.error;
+  const message=err && err.message ? String(err.message) : "不明なエラー";
+  const status=err && err.status!=null ? " status="+String(err.status) : "";
+  const url=err && err.url ? " url="+String(err.url) : "";
+  lastMapError=message+status+url;
+  // 404はタイルの無い範囲(地理院タイルの範囲外など)で起こる通常の応答なので、バナーは出さない
+  if(!(err && err.status===404)) showMapErrorBanner("地図の読み込みエラー: "+message);
+  console.error("MapLibre error:",err);
+});
+
+function updateInfoDisplay(){
+  const Lm = clampSideValue(sideEl.value), N = currentSize;
+  const mpp = Lm / N;
+  resSizeEl.textContent = `${N}×${N}`;
+  mppSpanEl.textContent = mpp.toFixed(1);
+  updateRecommendedSizeInList();
+  refreshResultValidity();
+}
+
+function updateMapView(){
+  updateInfoDisplay();
+  if(map.loaded()){
+    programmaticZoom=true;
+    if(twoEdge && lockStage===2){
+      // 2辺固定のズーム調整中: 角(pivot)を動かさず、1辺の距離に合わせたズームだけ変える
+      twoEdgeBusy=true;
+      map.jumpTo({center:[twoEdge.pivot.lon,twoEdge.pivot.lat], zoom:twoEdgeZoomForSide(clampSideValue(sideEl.value))});
+      twoEdgeBusy=false;
+    }else{
+      const targetZoom=zoomForSide(clampSideValue(sideEl.value), centerLat);
+      map.jumpTo({center:[centerLon,centerLat], zoom: targetZoom});
+    }
+    setTimeout(()=>{ programmaticZoom=false; }, 50);
+  }
+}
+
+map.on("load",()=>{
+  updateMapView();
+  layoutOverlay();
+  applyLockRestrictions();
+  setTimeout(()=>map.resize(),50);
+});
+
+sideEl.addEventListener("input",()=>{
+  if(!sideLocked) updateMapView();
+  else resyncLockedDistanceLive();
+});
+sideEl.addEventListener("change",()=>{
+  if(sideLocked){
+    // 距離固定の入力モード中の確定:空欄でなければその値を新しいロック値として採用
+    if(sideEl.value!==""){
+      sideEl.value=clampSideValue(sideEl.value);
+      sidePreLockValue=sideEl.value;
+    }
+    updateInfoDisplay();
+    resyncLockedDistanceLive();
+  }else{
+    sideEl.value=clampSideValue(sideEl.value);
+    updateMapView();
+  }
+});
+sideEl.addEventListener("keydown",e=>{
+  if(e.key==="Enter"){ e.preventDefault(); sideEl.blur(); } // リターンで確定(blur→change発火)
+});
+sideEl.addEventListener("blur",()=>{
+  // 距離固定の入力モード中に空欄のまま確定操作をした場合は、固定開始前の値に戻す(未入力キャンセル)
+  if(sideLocked && sideEl.value===""){
+    sideEl.value = sidePreLockValue!=null ? sidePreLockValue : clampSideValue("");
+    updateInfoDisplay();
+  }
+});
+
+// 1辺の距離固定（鍵ボタン）制御
+// 鍵マークオフ（🔓）: 数値入力不可（readonly）、ズームに連動して数値自動更新
+// 鍵マークオン（🔒）: 数値入力可能（readonly解除）、ズームは全面禁止。基点未決定ならスクロール可、決定後はスクロール禁止。
+let sideLocked=false;
+let sidePreLockValue=null;
+
+function applyLockRestrictions(){
+  if(lockStage >= 4){
+    disableMapZoom();
+    return;
+  }
+  if(sideLocked){
+    // 🔒 オン時：距離が変わるためズーム全面禁止
+    map.scrollZoom.disable();
+    map.boxZoom.disable();
+    map.doubleClickZoom.disable();
+    map.touchZoomRotate.disable();
+
+    // スクロール（ドラッグパン）：基点未決定（lockStage===0かつ!lockAnchor）なら許可、基点決定済みなら禁止
+    if(lockStage === 0 && !lockAnchor){
+      if(!loupeEnabled) map.dragPan.enable();
+    }else{
+      map.dragPan.disable();
+    }
+  }else{
+    // 🔓 オフ時：通常制御
+    if(!twoEdge || lockStage !== 2){
+      enableMapZoom();
+    }
+  }
+}
+
+function setSideLocked(on){
+  sideLocked = !!on;
+  if(sideLocked){
+    sidePreLockValue = sideEl.value;
+    sideEl.readOnly = false; // 🔒 数値入力可
+    sideEl.classList.add("side-locked");
+    sideLockBtnEl.classList.add("active");
+    sideLockBtnEl.textContent="🔒";
+    if(!sideEl.value){
+      sideEl.value = clampSideValue("1000");
+    }
+    sideEl.focus();
+    sideEl.select();
+  }else{
+    sideEl.blur();
+    sideEl.readOnly = true; // 🔓 数値入力不可
+    sideEl.classList.remove("side-locked");
+    sideLockBtnEl.classList.remove("active");
+    sideLockBtnEl.textContent="🔓";
+    if(sideEl.value===""){
+      sideEl.value = sidePreLockValue!=null ? sidePreLockValue : clampSideValue("");
+    }else{
+      sideEl.value=clampSideValue(sideEl.value);
+    }
+    sidePreLockValue=null;
+    updateMapView();
+    setTimeout(()=>{ if(map.loaded()) map.resize(); },350);
+  }
+  applyLockRestrictions();
+}
+sideLockBtnEl.addEventListener("click",()=>{ setSideLocked(!sideLocked); });
+
+// 初期状態: 🔓数値入力不可
+sideEl.readOnly = true;
+
+// iOS Safari 等、仮想キーボードの開閉でwindowのresizeが発火しない環境向けの保険
+if(window.visualViewport){
+  window.visualViewport.addEventListener("resize", ()=>{ if(map.loaded()) map.resize(); });
+}
+
+function syncCenterFromFrame(){
+  const fb = frameBoundsInMap();
+  const frameCenterLngLat = map.unproject([fb.left + fb.width / 2, fb.top + fb.height / 2]);
+  centerLat = frameCenterLngLat.lat;
+  centerLon = frameCenterLngLat.lng;
+  refreshResultValidity();
+}
+
+// dragend/zoomendで同期責務が分散していたのを一本化し、常にcenter→(必要なら)side→表示更新の順で行う
+function syncMapStateFromView(includeSide){
+  syncCenterFromFrame();
+  if(includeSide){
+    const currentZ = map.getZoom();
+    const Lm = WEBMERC_K * Math.cos(deg2rad(centerLat)) * frameSizePx / Math.pow(2, currentZ);
+    sideEl.value = clampSideValue(Lm);
+  }
+  updateInfoDisplay();
+}
+
+map.on("dragend",()=>{
+  if(lockStage>=4) return;
+  syncMapStateFromView(false);
+});
+
+map.on("zoomend", () => {
+  updateAnchorPin(); updatePendingPin(); updateEndPin();
+  if (programmaticZoom || lockStage>=4) return;
+  if (twoEdge && lockStage===2){ syncTwoEdgeSide(); return; }
+  // 自由軸(ns/ew)調整中は「1辺の距離」表示を固定軸のaxisFixedSideのまま維持し、ズームで書き換わらないようにする
+  if (lockStage===2 && lockPending && lockPending.axisPending) return;
+  // 距離固定(🔒)中はズームでの上書きを止め、この数値を優先して範囲を決める
+  if (sideLocked){ syncMapStateFromView(false); return; }
+  syncMapStateFromView(true);
+});
+
+/* ===================== 固定処理 ===================== */
+const LOCK_LONGPRESS_MS=1000, LOCK_MOVE_CANCEL_PX=10, LOCK_CANCEL_MS=3000;
+
+// 固定範囲確定フローの状態は、ここと下のaxisFixed*/lockBounds系に分かれている
+let lockMode="";      // "point"|"ns"|"ew"|""(未選択)
+let lockStage=0;      // 0:未着手 1:基点確認待ち 2:終点/自由軸待ち 3:確認ボタン待ち 4:範囲確認(stage4) 5:清書表示(stage5)
+let lockAnchor=null;  // 基点ピン(表示用。長押しで実際に押した座標)
+let lockPending=null; // 確定前の仮ピン(緑)。axisPending:trueの時は自由軸調整中を示す
+let lockEnd=null;     // 終点ピン(表示用。長押しで実際に押した座標)
+let pointBounds=null; // point方式で確定した抽出範囲(bounds)
+let lockPressTimer=null, lockPressStart=null, activePointerId=null;
+let isLongPressTriggered = false;
+let longPress3Timer=null;
+let lockStartState=null;
+// 2辺固定(隣り合う2辺を押した場合)の状態。{pivot:{lat,lon}, hEdge:"top"|"bottom", vEdge:"left"|"right", side, prevView}
+let twoEdge=null;
+let twoEdgeBusy=false;
+const ZERO_PADDING={left:0,right:0,top:0,bottom:0};
+let axisFreeStartView=null; // 自由軸調整開始時の地図表示位置・ズーム(オフスクリーン長押し時に戻すため)
+function saveAxisFreeStartView(){
+  axisFreeStartView={center:map.getCenter(), zoom:map.getZoom()};
+}
+
+function disableMapZoom() {
+  map.scrollZoom.disable();
+  map.boxZoom.disable();
+  map.doubleClickZoom.disable();
+  map.touchZoomRotate.disable();
+  map.dragPan.disable();
+}
+
+function enableMapZoom() {
+  if(sideLocked){
+    applyLockRestrictions();
+    return;
+  }
+  map.scrollZoom.enable();
+  map.boxZoom.enable();
+  // 拡大モード中は、ルーペ側のジェスチャーと競合しないよう地図本体のドラッグ・タッチズームを戻さない
+  if(!loupeEnabled){
+    map.doubleClickZoom.enable();
+    map.touchZoomRotate.enable();
+    map.dragPan.enable();
+  }
+}
+
+// 確定後(stage5)は拡大モードも終了する(地図操作はdisableMapZoomが止める)
+function setStage5Controls(disabled){
+  if(disabled && loupeEnabled){
+    loupeEnabled=false;
+    hideLoupe();
+  }
+}
+
+function setCleanViewOverlays(){
+  const isCleanView=lockStage===5;
+  const isPreviewOrClean=lockStage===4 || lockStage===5;
+  frameEl.style.display=isPreviewOrClean ? "none" : "block";
+  centerMarkEl.style.display=isPreviewOrClean ? "none" : "block";
+  updateElevBadge();
+  if(isCleanView){
+    previewRectEl.classList.remove("show");
+    anchorPinEl.style.display="none";
+    pendingPinEl.style.display="none";
+    endPinEl.style.display="none";
+  }
+}
+
+function resetLock(){
+  clearTwoEdgeState();
+  lockStage=0; lockAnchor=null; lockPending=null; lockEnd=null; pointBounds=null; lockBounds=null; lockFreeAxisValue=null; lockFreeAxisDirection=1; centerLonValue=0; centerLatValue=0; axisFixedStart=null; axisFixedEnd=null; axisFixedSide=0;
+  clearTimeout(lockPressTimer); clearTimeout(longPress3Timer); lockPressStart=null; activePointerId=null;
+  isLongPressTriggered = false;
+  frameEl.classList.remove("locked");
+  previewRectEl.classList.remove("show");
+  anchorPinEl.style.display="none";
+  pendingPinEl.style.display="none";
+  endPinEl.style.display="none";
+  frameEl.style.display="block";
+  centerMarkEl.style.display="block";
+  updateElevBadge();
+  setStage5Controls(false);
+  unlockAxisFreeZoomLimit();
+  hideAxisCandidateLine();
+  if(loupeEnabled) setLoupeMode(false);
+  if(sideLocked) setSideLocked(false); // 全キャンセル時に距離固定の状態が残らないようにする
+  applyLockRestrictions();
+}
+
+function restoreLockStartState(){
+  const restore=lockStartState;
+  resetLock();
+  lockMode="";
+  if(map.loaded()) map.doubleClickZoom.enable();
+  updateLockGuidance();
+  applyLockRestrictions();
+  if(!restore || !map.loaded()) return;
+  currentSize=restore.currentSize;
+  sizeBtnEl.textContent=`${currentSize}×${currentSize}`;
+  sideEl.value=restore.sideMeters;
+  centerLat=restore.center.lat;
+  centerLon=restore.center.lng;
+  updateInfoDisplay();
+  programmaticZoom=true;
+  map.jumpTo({center:[centerLon,centerLat],zoom:restore.zoom});
+  setTimeout(()=>{ programmaticZoom=false; },50);
+}
+
+function clientToLngLat(clientX,clientY){
+  const r=map.getContainer().getBoundingClientRect();
+  return map.unproject([clientX-r.left, clientY-r.top]);
+}
+
+function positionPinAt(pinEl,lat,lon){
+  if(lat === undefined || lon === undefined || lat === null || lon === null){
+    pinEl.style.display="none";
+    return;
+  }
+  const p=map.project([lon,lat]);
+  pinEl.style.left=p.x+"px";
+  pinEl.style.top=p.y+"px";
+  pinEl.style.display="block";
+}
+
+function updateAnchorPin(){
+  if(lockStage===5){
+    anchorPinEl.style.display="none"; return;
+  }
+  if(!lockAnchor || (lockStage < 1 && lockStage !== 4)){
+    anchorPinEl.style.display="none"; return;
+  }
+  positionPinAt(anchorPinEl,lockAnchor.lat,lockAnchor.lon);
+  if(lockStage===4){
+    anchorPinEl.classList.add("highlight");
+  }else{
+    anchorPinEl.classList.remove("highlight");
+  }
+}
+function updatePendingPin(){
+  if(lockStage===5){
+    pendingPinEl.style.display="none"; return;
+  }
+  if(!lockPending || (lockStage !== 1 && lockStage !== 3 && !(lockStage === 2 && (lockPending.axisPending || twoEdge)) && lockStage !== 4)){
+    pendingPinEl.style.display="none"; return;
+  }
+  positionPinAt(pendingPinEl,lockPending.lat,lockPending.lon);
+  if(lockStage===4){
+    pendingPinEl.classList.add("highlight");
+  }else{
+    pendingPinEl.classList.remove("highlight");
+  }
+}
+function updateEndPin(){
+  if(lockStage===5){
+    endPinEl.style.display="none"; return;
+  }
+  if(!lockEnd || lockStage < 4){
+    endPinEl.style.display="none"; return;
+  }
+  positionPinAt(endPinEl,lockEnd.lat,lockEnd.lon);
+  if(lockStage===4){
+    endPinEl.classList.add("highlight");
+  }else{
+    endPinEl.classList.remove("highlight");
+  }
+}
+
+function pointSquareBounds(anchor,end){
+  const latSign=end.lat>=anchor.lat ? 1 : -1;
+  const lonSign=end.lon>=anchor.lon ? 1 : -1;
+  let side;
+  if(sideLocked){
+    // 距離固定中は終点の位置(方向)だけを使い、辺の長さはロックされた「1辺の距離」を優先する
+    side=clampSideValue(sideEl.value);
+  }else{
+    const dLat_m=Math.abs(end.lat-anchor.lat)*(Math.PI/180)*EARTH_R;
+    const dLon_m=Math.abs(end.lon-anchor.lon)*(Math.PI/180)*EARTH_R*Math.cos(deg2rad(anchor.lat));
+    side=Math.max(100,Math.round(Math.max(dLat_m,dLon_m)));
+  }
+  const latDelta=rad2deg(side/EARTH_R)*latSign;
+  const lonDelta=rad2deg(side/(EARTH_R*Math.cos(deg2rad(anchor.lat))))*lonSign;
+  return {
+    side,
+    west:Math.min(anchor.lon,anchor.lon+lonDelta),
+    east:Math.max(anchor.lon,anchor.lon+lonDelta),
+    south:Math.min(anchor.lat,anchor.lat+latDelta),
+    north:Math.max(anchor.lat,anchor.lat+latDelta)
+  };
+}
+
+function updatePreviewRect(){
+  if(lockStage!==4 || !lockAnchor || !lockEnd){
+    previewRectEl.classList.remove("show");
+    return;
+  }
+  let west,south,east,north;
+  if(lockBounds){
+    ({west,south,east,north}=lockBounds);
+  }else if(lockMode==="point" && pointBounds){
+    ({west,south,east,north}=pointBounds);
+  }else{
+    west=Math.min(lockAnchor.lon,lockEnd.lon);
+    east=Math.max(lockAnchor.lon,lockEnd.lon);
+    south=Math.min(lockAnchor.lat,lockEnd.lat);
+    north=Math.max(lockAnchor.lat,lockEnd.lat);
+  }
+  const p1=map.project([west,north]);
+  const p2=map.project([east,south]);
+  const left=Math.min(p1.x,p2.x), top=Math.min(p1.y,p2.y);
+  const width=Math.abs(p2.x-p1.x), height=Math.abs(p2.y-p1.y);
+  previewRectEl.style.left=left+"px";
+  previewRectEl.style.top=top+"px";
+  previewRectEl.style.width=width+"px";
+  previewRectEl.style.height=height+"px";
+  previewRectEl.classList.add("show");
+}
+
+map.on("move",()=>{
+  updateAnchorPin(); updatePendingPin(); updateEndPin();
+  if(lockStage===4) updatePreviewRect();
+  if(loupeActive) renderLoupe();
+});
+
+const mapContainerEl=map.getContainer();
+const lockConfirmBtnsEl=el("lockConfirmBtns"), lockYesBtnEl=el("lockYesBtn"), lockNoBtnEl=el("lockNoBtn");
+
+let lastTapTime=0;
+function updateLockGuidance(){
+  // 範囲確定(確認画面・確定後)の間は、取得範囲とずれないよう「1辺の距離」の手入力を止める
+  sideEl.readOnly= (lockStage>=4) || (!sideLocked);
+  applyLockRestrictions();
+
+  const textEl=el("lockStatusText");
+  if(!lockMode){
+    textEl.textContent="枠内を1秒長押しで範囲の固定を開始";
+    textEl.classList.add("idle");
+    lockConfirmBtnsEl.style.display="none";
+    lockControlsEl.classList.remove("active-guidance");
+    return;
+  }
+  textEl.classList.remove("idle");
+  lockControlsEl.classList.add("active-guidance");
+  if(lockStage===0){
+    textEl.textContent="基点決定";
+    lockConfirmBtnsEl.style.display="none";
+  }else if(lockStage===1){
+    textEl.textContent="この位置でよろしいですか";
+    lockYesBtnEl.textContent="はい"; lockNoBtnEl.textContent="やり直し";
+    lockConfirmBtnsEl.style.display="flex";
+  }else if(lockStage===2){
+    textEl.textContent=(twoEdge ? "ズームで範囲を調整→長押しで決定" : ((lockMode!=="point" && lockPending && lockPending.axisPending) ? (lockMode==="ew" ? "南北方向を決定" : "東西方向を決定") : "終点決定"));
+    lockConfirmBtnsEl.style.display="none";
+  }else if(lockStage===3){
+    textEl.textContent="この位置でよろしいですか";
+    lockYesBtnEl.textContent="はい"; lockNoBtnEl.textContent="やり直し";
+    lockConfirmBtnsEl.style.display="flex";
+  }else if(lockStage===4){
+    textEl.textContent="この範囲で確定しますか？";
+    lockYesBtnEl.textContent="決定"; lockNoBtnEl.textContent="やり直し";
+    lockConfirmBtnsEl.style.display="flex";
+  }else if(lockStage===5){
+    textEl.textContent="範囲確定";
+    lockConfirmBtnsEl.style.display="none";
+  }
+}
+
+function snapToFrame(ll){
+  const p=map.project([ll.lng,ll.lat]);
+  const b=frameBoundsInMap();
+  const corners = [
+    {x:b.left, y:b.top, kind:"corner"},
+    {x:b.right, y:b.top, kind:"corner"},
+    {x:b.left, y:b.bottom, kind:"corner"},
+    {x:b.right, y:b.bottom, kind:"corner"}
+  ];
+
+  // 角判定ゾーンは枠一辺の25%
+  const cornerZoneHalf = b.width * 0.25;
+  let validCorners = [];
+  for(const c of corners){
+    if(Math.abs(p.x - c.x) <= cornerZoneHalf && Math.abs(p.y - c.y) <= cornerZoneHalf){
+      validCorners.push({corner: c, dist: Math.hypot(p.x - c.x, p.y - c.y)});
+    }
+  }
+
+  if(validCorners.length > 0){
+    validCorners.sort((a,b) => a.dist - b.dist);
+    const nearestCorner = validCorners[0].corner;
+    const llSnapped = map.unproject([nearestCorner.x, nearestCorner.y]);
+    return {lat:llSnapped.lat, lon:llSnapped.lng, kind:"corner"};
+  }
+
+  const x=clamp(p.x,b.left,b.right), y=clamp(p.y,b.top,b.bottom);
+  const candidates=[
+    ...corners,
+    {x:b.left,y:y,kind:"edge",edge:"left"},{x:b.right,y:y,kind:"edge",edge:"right"},
+    {x:x,y:b.top,kind:"edge",edge:"top"},{x:x,y:b.bottom,kind:"edge",edge:"bottom"}
+  ];
+  candidates.sort((u,v)=>Math.hypot(p.x-u.x,p.y-u.y)-Math.hypot(p.x-v.x,p.y-v.y));
+  const q=candidates[0], llSnapped=map.unproject([q.x,q.y]);
+  return {lat:llSnapped.lat,lon:llSnapped.lng,kind:q.kind,edge:q.edge};
+}
+
+function finalizeLock(){
+  if(!lockAnchor) return false;
+
+  if(lockMode==="point"){
+    const pointEnd=lockEnd || lockPending;
+    if(!pointEnd) return false;
+    pointBounds=pointSquareBounds(lockAnchor,pointEnd);
+    sideEl.value=pointBounds.side;
+    centerLat=(pointBounds.south+pointBounds.north)/2;
+    centerLon=(pointBounds.west+pointBounds.east)/2;
+    lockBounds={...pointBounds};
+    lockEnd={lat:pointEnd.lat,lon:pointEnd.lon,kind:pointEnd.kind||"edge"};
+    updateInfoDisplay();
+    return true;
+  }
+
+  if(!axisFixedStart || !axisFixedEnd || !axisFixedSide || lockFreeAxisValue===null) return false;
+
+  const lat1=axisFixedStart.lat, lon1=axisFixedStart.lon;
+  const lat2=axisFixedEnd.lat, lon2=axisFixedEnd.lon;
+  const side=sideLocked ? clampSideValue(sideEl.value) : axisFixedSide;
+
+  if(lockMode==="ew"){
+    const fixedWest=Math.min(lon1,lon2);
+    const fixedEast=Math.max(lon1,lon2);
+    const fixedCenterLon=(fixedWest+fixedEast)/2;
+    const freeLat=lockFreeAxisValue;
+    const latDelta=rad2deg(side/EARTH_R);
+    const otherLat=freeLat + (lockFreeAxisDirection||1)*latDelta;
+
+    lockBounds={
+      west:fixedWest,
+      east:fixedEast,
+      south:Math.min(freeLat,otherLat),
+      north:Math.max(freeLat,otherLat),
+      side
+    };
+    centerLat=(lockBounds.south+lockBounds.north)/2;
+    centerLon=fixedCenterLon;
+
+    // 元の長押し座標をそのまま保持する
+    lockAnchor={lat:lat1,lon:lon1,kind:axisFixedStart.kind||"edge",edge:axisFixedStart.edge};
+    lockEnd={lat:lat2,lon:lon2,kind:axisFixedEnd.kind||"edge",edge:axisFixedEnd.edge};
+  }else if(lockMode==="ns"){
+    const fixedSouth=Math.min(lat1,lat2);
+    const fixedNorth=Math.max(lat1,lat2);
+    const fixedCenterLat=(fixedSouth+fixedNorth)/2;
+    const freeLon=lockFreeAxisValue;
+    const lonDelta=rad2deg(side/(EARTH_R*Math.cos(deg2rad(lat1))));
+    const otherLon=freeLon + (lockFreeAxisDirection||1)*lonDelta;
+
+    lockBounds={
+      west:Math.min(freeLon,otherLon),
+      east:Math.max(freeLon,otherLon),
+      south:fixedSouth,
+      north:fixedNorth,
+      side
+    };
+    centerLat=fixedCenterLat;
+    centerLon=(lockBounds.west+lockBounds.east)/2;
+
+    // 元の長押し座標をそのまま保持する
+    lockAnchor={lat:lat1,lon:lon1,kind:axisFixedStart.kind||"edge",edge:axisFixedStart.edge};
+    lockEnd={lat:lat2,lon:lon2,kind:axisFixedEnd.kind||"edge",edge:axisFixedEnd.edge};
+  }else{
+    return false;
+  }
+
+  sideEl.value=side;
+  updateInfoDisplay();
+  return true;
+}
+
+// 距離固定(🔒)中に「1辺の距離」の数値を編集した際、基点(および対角/対辺の方向)を保ったまま
+// 枠とズームをその場で再計算する。方向は既存のlockEnd(点固定)/axisFixedEnd(南北・東西固定)に
+// 保持されている実座標から決まるため、新しいルールは不要(finalizeLock自体がsideLocked中は
+// sideEl.valueを辺の長さとして優先する設計に揃えてある)。
+function resyncLockedDistanceLive(){
+  if(!sideLocked || !map.loaded()) return;
+  if(!lockAnchor){
+    // 基点未決定:中心はそのまま、指定距離に合わせてズームだけ変える
+    updateMapView();
+    return;
+  }
+  if(!lockEnd && !(axisFixedStart && axisFixedEnd)){
+    // 基点はあるが対角/対辺の方向がまだ無い(2点目未決定)ので、数値だけでは再計算できない
+    return;
+  }
+  if(!finalizeLock()) return;
+  programmaticZoom=true;
+  const targetZoom=zoomForSide(clampSideValue(sideEl.value), centerLat);
+  map.jumpTo({center:[centerLon,centerLat], zoom: targetZoom});
+  setTimeout(()=>{ programmaticZoom=false; }, 50);
+  if(lockStage>=4 && typeof updatePreviewRect==="function") updatePreviewRect();
+}
+
+let axisFixedStart=null;    // ns/ew: 固定軸の基点(長押しした実座標)
+let axisFixedEnd=null;      // ns/ew: 固定軸の終点(長押しした実座標)
+let axisFixedSide=0;        // ns/ew: 固定軸の実距離(m)
+let lockFreeAxisValue=null; // ns/ew: 自由軸側の確定値(ew=lat / ns=lon)
+let lockFreeAxisDirection=1;// ns/ew: 自由軸のもう一方の端の算出方向
+let centerLonValue=0;       // ns/ew: 自由軸調整中の地図中心経度
+let centerLatValue=0;       // ns/ew: 自由軸調整中の地図中心緯度
+let lockBounds=null;        // ns/ew: 確定した抽出範囲(bounds)
+let lockAxisGuardBusy=false;
+
+function finalizeAxisFromFreePress(snapped){
+  if(!snapped || !axisFixedStart || !axisFixedEnd) return false;
+  if(lockMode==="ew"){
+    lockFreeAxisValue=snapped.lat;
+    lockFreeAxisDirection=snapped.edge==="top" ? -1 : 1;
+    return true;
+  }
+  if(lockMode==="ns"){
+    lockFreeAxisValue=snapped.lon;
+    lockFreeAxisDirection=snapped.edge==="right" ? -1 : 1;
+    return true;
+  }
+  return false;
+}
+
+function snapFreeAxisToFrame(ll){
+  const b=frameBoundsInMap();
+  const p=map.project([ll.lng,ll.lat]);
+  const x=p.x, y=p.y;
+  if(lockMode==="ew"){
+    const topDist=Math.abs(y-b.top), bottomDist=Math.abs(y-b.bottom);
+    if(Math.min(topDist,bottomDist)>b.height*0.25) return null;
+    const isTop=topDist<=bottomDist;
+    const ll=map.unproject([clamp(x,b.left,b.right),isTop?b.top:b.bottom]);
+    return {lat:ll.lat,lon:ll.lng,kind:"edge",edge:isTop?"top":"bottom"};
+  }
+  if(lockMode==="ns"){
+    const leftDist=Math.abs(x-b.left), rightDist=Math.abs(x-b.right);
+    if(Math.min(leftDist,rightDist)>b.width*0.25) return null;
+    const isLeft=leftDist<=rightDist;
+    const ll=map.unproject([isLeft?b.left:b.right,clamp(y,b.top,b.bottom)]);
+    return {lat:ll.lat,lon:ll.lng,kind:"edge",edge:isLeft?"left":"right"};
+  }
+  return null;
+}
+
+function prepareAxisLock(){
+  if(!lockAnchor || !lockPending) return false;
+
+  axisFixedStart={lat:lockAnchor.lat,lon:lockAnchor.lon,kind:lockAnchor.kind,edge:lockAnchor.edge};
+  axisFixedEnd={lat:lockPending.lat,lon:lockPending.lon,kind:lockPending.kind,edge:lockPending.edge};
+
+  if(lockMode==="ew"){
+    const dLon_m=Math.abs(axisFixedStart.lon-axisFixedEnd.lon)*(Math.PI/180)*EARTH_R*Math.cos(deg2rad(axisFixedStart.lat));
+    axisFixedSide=sideLocked ? clampSideValue(sideEl.value) : Math.max(100,Math.round(dLon_m));
+    centerLonValue=(axisFixedStart.lon+axisFixedEnd.lon)/2;
+    centerLatValue=map.getCenter().lat;
+  }else if(lockMode==="ns"){
+    const dLat_m=Math.abs(axisFixedStart.lat-axisFixedEnd.lat)*(Math.PI/180)*EARTH_R;
+    axisFixedSide=sideLocked ? clampSideValue(sideEl.value) : Math.max(100,Math.round(dLat_m));
+    centerLatValue=(axisFixedStart.lat+axisFixedEnd.lat)/2;
+    centerLonValue=map.getCenter().lng;
+  }else{
+    return false;
+  }
+
+  sideEl.value=axisFixedSide;
+  updateInfoDisplay();
+
+  lockAxisGuardBusy=true;
+  const c=map.getCenter();
+  const fixedCenter=[lockMode==="ew"?centerLonValue:c.lng, lockMode==="ew"?c.lat:centerLatValue];
+  const zoomRefLat=lockMode==="ew"?axisFixedStart.lat:centerLatValue;
+  const targetZoom=zoomForSide(axisFixedSide,zoomRefLat,frameSizePx);
+  map.jumpTo({center:fixedCenter,zoom:targetZoom});
+  lockAxisGuardBusy=false;
+
+  enableAxisFreeGestures();
+  lockAxisFreeZoomLimit();
+  return true;
+}
+
+function enableAxisFreeGestures(){
+  if(sideLocked){
+    applyLockRestrictions();
+    return;
+  }
+  map.scrollZoom.enable();
+  map.boxZoom.disable();
+  map.doubleClickZoom.disable();
+  if(!loupeEnabled){
+    map.dragPan.enable();
+    map.touchZoomRotate.enable();
+  }
+}
+
+function lockAxisFreeZoomLimit(){
+  if(!axisFixedStart || !axisFixedEnd || !axisFixedSide) return;
+  const lat=lockMode==="ew" ? axisFixedStart.lat : centerLatValue;
+  const z=zoomForSide(axisFixedSide, lat, frameSizePx);
+  map.setMinZoom(z);
+}
+function unlockAxisFreeZoomLimit(){
+  map.setMinZoom(0);
+}
+
+function bothAxisFixedPinsVisible(){
+  if(!axisFixedStart || !axisFixedEnd) return false;
+  const r=map.getContainer().getBoundingClientRect();
+  const tol=2;
+  const inView=(p)=> p.x>=-tol && p.x<=r.width+tol && p.y>=-tol && p.y<=r.height+tol;
+  const p1=map.project([axisFixedStart.lon,axisFixedStart.lat]);
+  const p2=map.project([axisFixedEnd.lon,axisFixedEnd.lat]);
+  return inView(p1) && inView(p2);
+}
+let axisOffscreenWarningTimer=null;
+function showAxisOffscreenWarning(){
+  const textEl=el("lockStatusText");
+  if(textEl){
+    textEl.textContent="基点・終点が画面内に入っていなかったため、表示位置を元に戻しました";
+    clearTimeout(axisOffscreenWarningTimer);
+    axisOffscreenWarningTimer=setTimeout(()=>{ updateLockGuidance(); },1500);
+  }
+  if(axisFreeStartView){
+    map.jumpTo({center:axisFreeStartView.center, zoom:axisFreeStartView.zoom});
+  }
+}
+
+function updateAxisCandidateLine(clientX,clientY){
+  if(!(lockMode==="ew"||lockMode==="ns")){ hideAxisCandidateLine(); return; }
+  const b=frameBoundsInMap();
+  const r=map.getContainer().getBoundingClientRect();
+  const x=clientX-r.left, y=clientY-r.top;
+  if(lockMode==="ew"){
+    const topDist=Math.abs(y-b.top), bottomDist=Math.abs(y-b.bottom);
+    if(Math.min(topDist,bottomDist)>b.height*0.25){ hideAxisCandidateLine(); return; }
+    const edgeY=topDist<=bottomDist?b.top:b.bottom;
+    axisCandidateLineEl.style.left=b.left+"px";
+    axisCandidateLineEl.style.top=(edgeY-1)+"px";
+    axisCandidateLineEl.style.width=b.width+"px";
+    axisCandidateLineEl.style.height="3px";
+    axisCandidateLineEl.style.display="block";
+  }else{
+    const leftDist=Math.abs(x-b.left), rightDist=Math.abs(x-b.right);
+    if(Math.min(leftDist,rightDist)>b.width*0.25){ hideAxisCandidateLine(); return; }
+    const edgeX=leftDist<=rightDist?b.left:b.right;
+    axisCandidateLineEl.style.left=(edgeX-1)+"px";
+    axisCandidateLineEl.style.top=b.top+"px";
+    axisCandidateLineEl.style.width="3px";
+    axisCandidateLineEl.style.height=b.height+"px";
+    axisCandidateLineEl.style.display="block";
+  }
+}
+function hideAxisCandidateLine(){
+  axisCandidateLineEl.style.display="none";
+}
+
+function enforceFixedAxisCenter(){
+  if(lockAxisGuardBusy || lockStage!==2 || lockMode==="point" || !lockPending || !lockPending.axisPending) return;
+  const c=map.getCenter();
+  const wanted=lockMode==="ew"?[centerLonValue,c.lat]:[c.lng,centerLatValue];
+  const delta=lockMode==="ew" ? Math.abs(c.lng-centerLonValue) : Math.abs(c.lat-centerLatValue);
+  if(delta<1e-10) return;
+  lockAxisGuardBusy=true;
+  map.setCenter(wanted);
+  lockAxisGuardBusy=false;
+}
+
+map.on("dragend",enforceFixedAxisCenter);
+map.on("zoomend",enforceFixedAxisCenter);
+
+/* ===================== 2辺固定(隣り合う2辺を押した場合) ===================== */
+function isHEdge(e){ return e==="top" || e==="bottom"; }
+function classifyEdgePair(a,b){
+  if(!a || !b) return "unknown";
+  if(a===b) return "same";
+  return isHEdge(a)===isHEdge(b) ? "opposite" : "adjacent";
+}
+function checkSecondPress(snapped){
+  if(lockMode==="point" || !lockAnchor || !snapped) return {ok:true};
+  if(lockAnchor.kind==="corner" || snapped.kind==="corner") return {ok:true};
+  const rel=classifyEdgePair(lockAnchor.edge,snapped.edge);
+  if(rel==="same") return {ok:false,msg:"基点と同じ辺です。別の辺で決定してください"};
+  if(rel==="opposite"){
+    const nsPair=isHEdge(lockAnchor.edge);
+    if(lockMode==="ns" && !nsPair) return {ok:false,msg:"上下の辺、または隣り合う辺で決定してください"};
+    if(lockMode==="ew" && nsPair) return {ok:false,msg:"左右の辺、または隣り合う辺で決定してください"};
+  }
+  return {ok:true};
+}
+let lockHintTimer=null;
+function showLockHint(msg){
+  const textEl=el("lockStatusText");
+  if(!textEl) return;
+  textEl.textContent=msg;
+  clearTimeout(lockHintTimer);
+  lockHintTimer=setTimeout(()=>{ updateLockGuidance(); },1800);
+}
+
+function twoEdgeTargetPx(){
+  const b=frameBoundsInMap();
+  return {x:twoEdge.vEdge==="right" ? b.right : b.left, y:twoEdge.hEdge==="top" ? b.top : b.bottom};
+}
+function twoEdgePadding(){
+  const c=map.getContainer(), t=twoEdgeTargetPx();
+  const px=2*t.x-c.clientWidth, py=2*t.y-c.clientHeight;
+  return {left:Math.max(0,px), right:Math.max(0,-px), top:Math.max(0,py), bottom:Math.max(0,-py)};
+}
+function twoEdgeZoomForSide(L){
+  return clamp(Math.log2(WEBMERC_K*Math.cos(deg2rad(twoEdge.pivot.lat))*frameSizePx/Math.max(1,L)),0,22);
+}
+function twoEdgeSideFromZoom(){
+  return WEBMERC_K*Math.cos(deg2rad(twoEdge.pivot.lat))*frameSizePx/Math.pow(2,map.getZoom());
+}
+function syncTwoEdgeSide(){
+  if(!twoEdge) return;
+  if(sideLocked){ updateInfoDisplay(); return; }
+  twoEdge.side=clampSideValue(twoEdgeSideFromZoom());
+  sideEl.value=twoEdge.side;
+  updateInfoDisplay();
+}
+
+function enterTwoEdgeView(zoom){
+  if(!twoEdge) return;
+  twoEdgeBusy=true; programmaticZoom=true;
+  map.setMaxZoom(twoEdgeZoomForSide(100));
+  map.setMinZoom(twoEdgeZoomForSide(100000));
+  map.jumpTo({center:[twoEdge.pivot.lon,twoEdge.pivot.lat], zoom, padding:twoEdgePadding()});
+  twoEdgeBusy=false;
+  setTimeout(()=>{ programmaticZoom=false; },50);
+  map.dragPan.disable(); map.boxZoom.disable(); map.doubleClickZoom.disable();
+  if(sideLocked){
+    map.scrollZoom.disable();
+    map.touchZoomRotate.disable();
+  }else{
+    map.scrollZoom.enable({around:"center"});
+    if(!loupeEnabled){
+      map.touchZoomRotate.enable({around:"center"});
+    }
+  }
+  syncTwoEdgeSide();
+}
+
+function prepareTwoEdgeLock(){
+  if(!lockAnchor || !lockPending) return false;
+  const a=lockAnchor.edge, b=lockPending.edge;
+  if(classifyEdgePair(a,b)!=="adjacent") return false;
+  const hPt=isHEdge(a) ? lockAnchor : lockPending;
+  const vPt=isHEdge(a) ? lockPending : lockAnchor;
+  twoEdge={
+    pivot:{lat:hPt.lat, lon:vPt.lon},
+    hEdge:isHEdge(a) ? a : b,
+    vEdge:isHEdge(a) ? b : a,
+    side:0,
+    prevView:{center:map.getCenter(), zoom:map.getZoom()}
+  };
+  enterTwoEdgeView(sideLocked ? twoEdgeZoomForSide(clampSideValue(sideEl.value)) : map.getZoom());
+  return true;
+}
+
+function leaveTwoEdgeView(restoreView){
+  if(!twoEdge) return;
+  const prev=twoEdge.prevView;
+  twoEdgeBusy=true;
+  map.setMinZoom(0); map.setMaxZoom(22);
+  map.scrollZoom.enable();
+  if(!loupeEnabled){ map.dragPan.enable(); map.touchZoomRotate.enable(); }
+  map.boxZoom.disable(); map.doubleClickZoom.disable();
+  if(restoreView){
+    programmaticZoom=true;
+    map.jumpTo({center:prev.center, zoom:prev.zoom, padding:ZERO_PADDING});
+    setTimeout(()=>{ programmaticZoom=false; },50);
+    twoEdge=null;
+  }
+  twoEdgeBusy=false;
+}
+
+function clearTwoEdgeState(){
+  if(!twoEdge) return;
+  twoEdge=null;
+  map.setMaxZoom(22);
+  map.setPadding(ZERO_PADDING);
+}
+
+function finalizeTwoEdge(){
+  if(!twoEdge || !lockAnchor) return false;
+  const side=clampSideValue(sideLocked ? sideEl.value : twoEdgeSideFromZoom());
+  const lat=twoEdge.pivot.lat, lon=twoEdge.pivot.lon;
+  const latDelta=rad2deg(side/EARTH_R);
+  const lonDelta=rad2deg(side/(EARTH_R*Math.cos(deg2rad(lat))));
+  const north=twoEdge.hEdge==="top" ? lat : lat+latDelta;
+  const south=twoEdge.hEdge==="top" ? lat-latDelta : lat;
+  const east=twoEdge.vEdge==="right" ? lon : lon+lonDelta;
+  const west=twoEdge.vEdge==="right" ? lon-lonDelta : lon;
+  lockBounds={west,east,south,north,side};
+  twoEdge.side=side;
+  centerLat=(south+north)/2; centerLon=(west+east)/2;
+  sideEl.value=side;
+  updateInfoDisplay();
+  return true;
+}
+
+function returnToTwoEdgeStage2(){
+  if(!twoEdge || !lockEnd) return;
+  lockPending={lat:lockEnd.lat,lon:lockEnd.lon,kind:lockEnd.kind||"edge",edge:lockEnd.edge};
+  lockEnd=null; lockBounds=null;
+  lockStage=2;
+  previewRectEl.classList.remove("show");
+  setCleanViewOverlays();
+  enterTwoEdgeView(twoEdgeZoomForSide(twoEdge.side||1000));
+  updateAnchorPin(); updatePendingPin(); updateEndPin(); updateLockGuidance();
+}
+
+map.on("zoom",()=>{
+  if(!twoEdge || lockStage!==2 || programmaticZoom || twoEdgeBusy) return;
+  syncTwoEdgeSide();
+});
+map.on("moveend",()=>{
+  if(!twoEdge || lockStage!==2 || twoEdgeBusy) return;
+  const t=twoEdgeTargetPx(), p=map.project([twoEdge.pivot.lon,twoEdge.pivot.lat]);
+  if(Math.abs(p.x-t.x)<0.5 && Math.abs(p.y-t.y)<0.5) return;
+  twoEdgeBusy=true;
+  map.jumpTo({center:[twoEdge.pivot.lon,twoEdge.pivot.lat]});
+  twoEdgeBusy=false;
+});
+
+function fitZoomForBounds(bounds,viewSize){
+  const mercY=lat=>Math.log(Math.tan(Math.PI/4+deg2rad(lat)/2));
+  const wUnit=(bounds.east-bounds.west)/360;
+  const hUnit=(mercY(bounds.north)-mercY(bounds.south))/(2*Math.PI);
+  const unit=Math.max(wUnit,hUnit);
+  if(!(unit>0)) return null;
+  return clamp(Math.log2(viewSize/(512*unit)),0,22);
+}
+
+function previewLock(){
+  const bounds=lockBounds || pointBounds;
+  const side=bounds ? bounds.side : +sideEl.value;
+  const viewSize=frameSizePx;
+  const fitZoom=bounds ? fitZoomForBounds(bounds,viewSize) : null;
+  const targetZoom=fitZoom!==null ? fitZoom : zoomForSide(side,centerLat,viewSize);
+  disableMapZoom();
+  programmaticZoom=true;
+  lockYesBtnEl.disabled=true; lockNoBtnEl.disabled=true;
+  let completed=false;
+  const finishPreview=()=>{
+    if(completed)return; completed=true; programmaticZoom=false;
+    setCleanViewOverlays(); updateLockGuidance(); updateAnchorPin(); updatePendingPin(); updateEndPin(); updatePreviewRect();
+    lockYesBtnEl.disabled=false; lockNoBtnEl.disabled=false;
+  };
+  map.once("moveend",finishPreview);
+  map.easeTo({center:[centerLon,centerLat],zoom:targetZoom,padding:ZERO_PADDING,duration:350});
+  setTimeout(finishPreview,400);
+}
+
+function showCleanView(){
+  const bounds = lockBounds || pointBounds;
+  if(!bounds) return;
+  const viewSize=mapAreaEl?mapAreaEl.clientWidth:frameSizePx;
+  programmaticZoom=true;
+  const approxZoom=zoomForSide(bounds.side,centerLat,viewSize);
+  map.jumpTo({center:[centerLon,centerLat],zoom:approxZoom});
+  const p1=map.project([bounds.west,bounds.north]);
+  const p2=map.project([bounds.east,bounds.south]);
+  const actualPx=Math.max(Math.abs(p2.x-p1.x),Math.abs(p2.y-p1.y));
+  const finalZoom = actualPx>0 ? clamp(approxZoom+Math.log2(viewSize/actualPx),0,22) : approxZoom;
+  map.jumpTo({center:[centerLon,centerLat],zoom:finalZoom});
+  map.once("moveend",()=>{programmaticZoom=false;});
+  setTimeout(()=>{programmaticZoom=false;},50);
+}
+
+function stepBackLock(){
+  if(!lockMode)return;
+  if(lockStage===5) return;
+  if(lockStage===1){
+    lockPending=null; pendingPinEl.style.display="none"; lockStage=0; updateLockGuidance();
+  }else if(lockStage===2){
+    if(twoEdge){
+      leaveTwoEdgeView(true);
+      lockStage=3;
+      updateAnchorPin(); updatePendingPin(); updateLockGuidance();
+    }else if(lockPending && lockPending.axisPending && axisFixedStart && axisFixedEnd){
+      lockPending=Object.assign({}, lockPending, {axisPending:false});
+      axisFixedStart=null; axisFixedEnd=null; axisFixedSide=0;
+      lockStage=3;
+      unlockAxisFreeZoomLimit();
+      hideAxisCandidateLine();
+      updateAnchorPin(); updatePendingPin(); updateLockGuidance();
+    }else{
+      lockPending=lockAnchor; lockAnchor=null; anchorPinEl.style.display="none"; lockStage=1; updatePendingPin(); updateLockGuidance();
+    }
+  }else if(lockStage===3){
+    lockPending=null; pendingPinEl.style.display="none"; lockStage=2; updateLockGuidance();
+  }else if(lockStage===4){
+    if(twoEdge && lockMode!=="point"){
+      returnToTwoEdgeStage2();
+    }else if(lockMode==="point" || !axisFixedStart){
+      resetLock(); lockMode=""; updateLockGuidance();
+    }else{
+      lockAnchor = {lat: axisFixedStart.lat, lon: axisFixedStart.lon, kind: axisFixedStart.kind||"edge", edge: axisFixedStart.edge};
+      lockPending = {lat: axisFixedEnd.lat, lon: axisFixedEnd.lon, kind: axisFixedEnd.kind||"edge", edge: axisFixedEnd.edge, axisPending: true};
+      lockEnd = null;
+      lockFreeAxisValue = null;
+      lockFreeAxisDirection = 1;
+      lockBounds = null;
+      lockStage = 2;
+      previewRectEl.classList.remove("show");
+      setCleanViewOverlays();
+      enableAxisFreeGestures();
+      lockAxisFreeZoomLimit();
+      saveAxisFreeStartView();
+      updateAnchorPin(); updatePendingPin(); updateEndPin(); updateLockGuidance();
+    }
+  }
+}
+
+function advanceLockAtLngLat(ll){
+  isLongPressTriggered=true;
+
+  // 2辺固定のズーム調整中は、長押しで確定
+  if(lockStage===2 && twoEdge){
+    if(!lockPending || !finalizeTwoEdge()) return;
+    lockEnd={lat:lockPending.lat,lon:lockPending.lon,kind:lockPending.kind||"edge",edge:lockPending.edge};
+    lockPending=null;
+    leaveTwoEdgeView(false);
+    lockStage=4;
+    updateAnchorPin(); updatePendingPin(); updateEndPin(); updatePreviewRect(); previewLock();
+    return;
+  }
+
+  // ns/ewの自由軸(2本目の辺)の確定
+  if(lockStage===2 && lockMode!=="point" && lockAnchor && lockPending && lockPending.axisPending){
+    if(!bothAxisFixedPinsVisible()){ showAxisOffscreenWarning(); return; }
+    const freeSnapped=snapFreeAxisToFrame(ll);
+    if(!freeSnapped || !finalizeAxisFromFreePress(freeSnapped)) return;
+    lockPending=Object.assign({},freeSnapped,{axisPending:false});
+    if(!finalizeLock()) return;
+    lockStage=4;
+    unlockAxisFreeZoomLimit();
+    hideAxisCandidateLine();
+    updateAnchorPin(); updatePendingPin(); updateEndPin(); updatePreviewRect(); previewLock();
+    return;
+  }
+
+  const snapped=snapToFrame(ll);
+
+  if(lockStage===0){
+    lockPending=snapped; lockStage=1; frameEl.classList.add("locked"); updatePendingPin(); updateLockGuidance(); return;
+  }
+  if(lockStage===1){
+    // 基点確定
+    lockAnchor={lat:lockPending.lat,lon:lockPending.lon,kind:lockPending.kind||"edge",edge:lockPending.edge};
+    lockPending=null;
+    pendingPinEl.style.display="none";
+    updateAnchorPin();
+
+    if(sideLocked && (lockMode==="ns" || lockMode==="ew")){
+      // 1辺固定(🔒): 東西南北(軸固定)の場合、長さはロック値で一義的に定まるため
+      // 2点目の長さ選択をスキップし直接自由軸スライド(対辺方向決定)ステージへ
+      axisFixedStart={lat:lockAnchor.lat,lon:lockAnchor.lon,kind:lockAnchor.kind,edge:lockAnchor.edge};
+      axisFixedEnd={lat:lockAnchor.lat,lon:lockAnchor.lon,kind:lockAnchor.kind,edge:lockAnchor.edge};
+      axisFixedSide=clampSideValue(sideEl.value);
+
+      centerLatValue=map.getCenter().lat;
+      centerLonValue=map.getCenter().lng;
+
+      lockStage=2;
+      lockPending={lat:lockAnchor.lat,lon:lockAnchor.lon,kind:lockAnchor.kind,edge:lockAnchor.edge,axisPending:true};
+      saveAxisFreeStartView();
+      updateAnchorPin(); updatePendingPin(); updateLockGuidance(); return;
+    }else{
+      lockStage=2; updateLockGuidance(); return;
+    }
+  }
+  if(lockStage===2){
+    if(sideLocked && lockMode==="point" && lockAnchor){
+      // 1辺固定(🔒): 角基点の場合、終点(対角)タップで即座にロック幅の正方形を確定
+      lockEnd={lat:snapped.lat,lon:snapped.lon,kind:snapped.kind||"edge"};
+      pointBounds=pointSquareBounds(lockAnchor,lockEnd);
+      lockBounds={...pointBounds};
+      centerLat=(pointBounds.south+pointBounds.north)/2;
+      centerLon=(pointBounds.west+pointBounds.east)/2;
+      lockStage=4; lockPending=null; updateAnchorPin(); updateEndPin(); updatePreviewRect(); previewLock(); return;
+    }
+    if(!(lockPending && lockPending.axisPending)){
+      const chk=checkSecondPress(snapped);
+      if(!chk.ok){ showLockHint(chk.msg); return; }
+    }
+    lockPending=snapped; lockStage=3; updatePendingPin(); updateLockGuidance(); return;
+  }
+}
+
+function advanceLockAt(clientX,clientY){
+  advanceLockAtLngLat(clientToLngLat(clientX,clientY));
+}
+
+function beginAutoLockModeAtLngLat(ll){
+  if(lockMode || lockStage!==0)return;
+  const b=frameBoundsInMap();
+  const p=map.project([ll.lng,ll.lat]);
+  if(p.x<b.left || p.x>b.right || p.y<b.top || p.y>b.bottom) return;
+  const rx=(p.x-b.left)/Math.max(1,b.width), ry=(p.y-b.top)/Math.max(1,b.height);
+  const col=rx<0.25?"left":(rx>0.75?"right":"center");
+  const row=ry<0.25?"top":(ry>0.75?"bottom":"center");
+  if(col==="center" && row!=="center") lockMode="ns";
+  else if(row==="center" && col!=="center") lockMode="ew";
+  else lockMode="point";
+  lockStartState={center:map.getCenter(),zoom:map.getZoom(),sideMeters:+sideEl.value,currentSize};
+  map.doubleClickZoom.disable();
+  updateLockGuidance();
+}
+
+function beginAutoLockModeAt(clientX,clientY){
+  beginAutoLockModeAtLngLat(clientToLngLat(clientX,clientY));
+}
+
+mapContainerEl.addEventListener("pointerdown",e=>{
+  if(isRunning) return;
+  if(loupeEnabled) return;
+  if(activePointerId!==null && activePointerId!==e.pointerId){
+    activePointerId=null;
+  }
+  if(activePointerId!==null)return;
+  if(lockStage!==0 && !lockMode)return;
+  activePointerId=e.pointerId; isLongPressTriggered=false; lockPressStart={x:e.clientX,y:e.clientY};
+  clearTimeout(lockPressTimer); clearTimeout(longPress3Timer);
+  if(lockStage!==5){
+    lockPressTimer=setTimeout(()=>{
+      if(!lockPressStart)return;
+      if(!lockMode && lockStage===0) beginAutoLockModeAt(lockPressStart.x,lockPressStart.y);
+      if(lockMode) advanceLockAt(lockPressStart.x,lockPressStart.y);
+    },LOCK_LONGPRESS_MS);
+  }
+  // 3秒間継続長押しで全キャンセル
+  longPress3Timer=setTimeout(()=>{ restoreLockStartState(); },LOCK_CANCEL_MS);
+});
+
+mapContainerEl.addEventListener("pointermove",e=>{
+  if(loupeEnabled) return;
+  if(e.pointerId!==activePointerId)return;
+  if(lockStage===2 && lockMode!=="point" && lockPending && lockPending.axisPending){
+    updateAxisCandidateLine(e.clientX,e.clientY);
+  }
+  if(!lockPressStart)return;
+  const dist=Math.hypot(e.clientX-lockPressStart.x,e.clientY-lockPressStart.y);
+  if(dist>LOCK_MOVE_CANCEL_PX){
+    clearTimeout(lockPressTimer);
+    clearTimeout(longPress3Timer);
+    lockPressStart=null;
+  }
+});
+
+mapContainerEl.addEventListener("pointerup",e=>{
+  if(loupeEnabled) return;
+  if(e.pointerId!==activePointerId)return;
+  clearTimeout(lockPressTimer);
+  clearTimeout(longPress3Timer);
+  lockPressStart=null;
+  activePointerId=null;
+  hideAxisCandidateLine();
+  if(lockStage===5){
+    isLongPressTriggered=false;
+    lastTapTime=0;
+    return;
+  }
+  const now=Date.now(), dt=now-lastTapTime;
+  if(isLongPressTriggered){isLongPressTriggered=false;lastTapTime=0;return;}
+  if(dt<300&&dt>0){stepBackLock();lastTapTime=0;}else lastTapTime=now;
+});
+mapContainerEl.addEventListener("pointercancel",e=>{
+  if(loupeEnabled) return;
+  if(e.pointerId!==activePointerId && activePointerId!==null) return;
+  clearTimeout(lockPressTimer);
+  clearTimeout(longPress3Timer);
+  lockPressStart=null;
+  activePointerId=null;
+  isLongPressTriggered=false;
+  hideAxisCandidateLine();
+});
+
+lockYesBtnEl.addEventListener("click",()=>{
+  if(isRunning) return;
+  if(lockStage===1){
+    lockAnchor={lat:lockPending.lat,lon:lockPending.lon,kind:lockPending.kind||"edge",edge:lockPending.edge}; lockPending=null; pendingPinEl.style.display="none"; updateAnchorPin();
+    if(sideLocked && (lockMode==="ns" || lockMode==="ew")){
+      // 1辺固定(🔒): 東西南北(軸固定)の場合、長さはロック値で一義的に定まるため
+      // 2点目の長さ選択をスキップし直接自由軸スライド(対辺方向決定)ステージへ
+      axisFixedStart={lat:lockAnchor.lat,lon:lockAnchor.lon,kind:lockAnchor.kind,edge:lockAnchor.edge};
+      axisFixedEnd={lat:lockAnchor.lat,lon:lockAnchor.lon,kind:lockAnchor.kind,edge:lockAnchor.edge};
+      axisFixedSide=clampSideValue(sideEl.value);
+
+      centerLatValue=map.getCenter().lat;
+      centerLonValue=map.getCenter().lng;
+
+      lockStage=2;
+      lockPending={lat:lockAnchor.lat,lon:lockAnchor.lon,kind:lockAnchor.kind,edge:lockAnchor.edge,axisPending:true};
+      saveAxisFreeStartView();
+      updateAnchorPin(); updatePendingPin(); updateLockGuidance();
+    }else{
+      lockStage=2; updateLockGuidance();
+    }
+  }else if(lockStage===3){
+    if(lockMode==="point"){
+      if(!finalizeLock()) return;
+      lockStage=4; lockPending=null; updateAnchorPin(); updateEndPin(); updatePreviewRect(); previewLock();
+    }else{
+      const isCorner=lockAnchor.kind==="corner" || lockPending.kind==="corner";
+      if(isCorner){
+        pointBounds=pointSquareBounds(lockAnchor,lockPending);
+        lockBounds={...pointBounds};
+        sideEl.value=pointBounds.side;
+        centerLat=(pointBounds.south+pointBounds.north)/2;
+        centerLon=(pointBounds.west+pointBounds.east)/2;
+        lockEnd={lat:lockPending.lat,lon:lockPending.lon,kind:lockPending.kind||"corner"};
+        lockStage=4; lockPending=null; updateAnchorPin(); updateEndPin(); updatePreviewRect(); previewLock();
+      }else if(classifyEdgePair(lockAnchor.edge,lockPending.edge)==="adjacent"){
+        if(prepareTwoEdgeLock()){
+          lockStage=2;
+          updateAnchorPin(); updatePendingPin(); updateLockGuidance();
+        }
+      }else if(prepareAxisLock()){
+        lockStage=2; lockPending={...lockPending,axisPending:true};
+        saveAxisFreeStartView();
+        updateAnchorPin(); updatePendingPin(); updateLockGuidance();
+      }
+    }
+  }else if(lockStage===4){
+    lockStage=5; disableMapZoom(); setStage5Controls(true);
+    setCleanViewOverlays();
+    showCleanView();
+    updateLockGuidance();
+  }
+});
+
+lockNoBtnEl.addEventListener("click",()=>{ if(isRunning) return; stepBackLock(); });
+
+/* ===================== 拡大鏡 ===================== */
+let loupeEnabled=false, loupeActive=false, loupeZoom=2, loupePoint=null, mapDragging=false;
+const LOUPE_PAN_SCALE=0.35;
+const LOUPE_PINCH_SWITCH_RATIO=0.2, LOUPE_DRAG_START_PX=10;
+let loupeViewOff={x:0,y:0};
+let loupeDragPoint=null;
+let loupeMap=null, loupeMapEl=null, loupeOverlayCanvasEl=null, loupeOverlayCtx=null;
+let loupeSizeSynced=-1, loupeNeedsResize=false;
+let loupePressTimer=null;
+let lastLoupeTapTime=0;
+let loupePressStart=null;
+let magPressTimer=null, magPressStart=null, lastMagTapTime=0;
+
+function ensureLoupeMap(){
+  if(loupeMap) return;
+  loupeMapEl=el("loupeMapEl");
+  loupeOverlayCanvasEl=el("loupeOverlayCanvas");
+  loupeOverlayCtx=loupeOverlayCanvasEl.getContext("2d");
+  loupeMap=new maplibregl.Map({
+    container:loupeMapEl,
+    style:styleFor(currentStyleKey),
+    center:[centerLon,centerLat],
+    zoom:clamp(map.getZoom()+loupeZoom,0,22),
+    fadeDuration:0,
+    interactive:false,
+    attributionControl:false,
+    dragRotate:false,
+    pitchWithRotate:false
+  });
+  loupeMap.on("move",()=>{ if(loupeActive) renderLoupeOverlay(); });
+}
+
+function isBoundaryInLoupe(){
+  ensureLoupeMap();
+  if(!loupeActive || !loupePoint || !loupeMap) return false;
+  const size=currentLoupeSize;
+  const rects=[];
+  if(frameEl.style.display !== "none"){
+    const fb=frameBoundsInMap();
+    const p1=loupeMap.project(map.unproject([fb.left,fb.top]));
+    const p2=loupeMap.project(map.unproject([fb.right,fb.bottom]));
+    rects.push({left:Math.min(p1.x,p2.x),right:Math.max(p1.x,p2.x),top:Math.min(p1.y,p2.y),bottom:Math.max(p1.y,p2.y)});
+  }
+  if(previewRectEl.classList.contains("show")){
+    const prL=parseFloat(previewRectEl.style.left);
+    const prT=parseFloat(previewRectEl.style.top);
+    const prW=parseFloat(previewRectEl.style.width);
+    const prH=parseFloat(previewRectEl.style.height);
+    if(!isNaN(prL) && !isNaN(prT) && !isNaN(prW) && !isNaN(prH)){
+      const p1=loupeMap.project(map.unproject([prL,prT]));
+      const p2=loupeMap.project(map.unproject([prL+prW,prT+prH]));
+      rects.push({left:Math.min(p1.x,p2.x),right:Math.max(p1.x,p2.x),top:Math.min(p1.y,p2.y),bottom:Math.max(p1.y,p2.y)});
+    }
+  }
+  return rects.some(r => r.left<=size && r.right>=0 && r.top<=size && r.bottom>=0);
+}
+
+function showLoupe(point){
+  const wasShown = magnifierEl.classList.contains("show");
+  loupeActive=true;
+  loupePoint={x:point.x,y:point.y};
+  loupeViewOff={x:0,y:0};
+  const b=frameBoundsInMap();
+
+  currentLoupeSize = b.width * 0.7;
+
+  const frameCenterX = b.left + b.width / 2;
+  const frameCenterY = b.top + b.height / 2;
+
+  const isLeft = point.x <= frameCenterX;
+  const isTop = point.y <= frameCenterY;
+
+  const targetIsLeft = !isLeft;
+  const targetIsTop = isTop;
+
+  let lx, ly;
+  const margin = 10;
+
+  if (targetIsTop) ly = b.top + margin;
+  else ly = b.top + b.height - margin - currentLoupeSize;
+
+  if (targetIsLeft) lx = b.left + margin;
+  else lx = b.left + b.width - margin - currentLoupeSize;
+
+  magnifierEl.style.width = currentLoupeSize + "px";
+  magnifierEl.style.height = currentLoupeSize + "px";
+  magnifierEl.style.left = lx + "px";
+  magnifierEl.style.top = ly + "px";
+  magnifierEl.classList.add("show");
+
+  ensureLoupeMap();
+  if(!wasShown) loupeNeedsResize=true;
+  renderLoupe();
+}
+
+function hideLoupe(){
+  loupeActive=false;
+  magnifierEl.classList.remove("show");
+}
+
+function setLoupeMode(on){
+  loupeEnabled=on;
+  const twoEdgeZoom=!!(twoEdge && lockStage===2);
+  if(on){
+    map.dragPan.disable();
+    map.touchZoomRotate.disable();
+    map.getCanvas().style.touchAction="none";
+    map.doubleClickZoom.disable();
+    clearTimeout(lockPressTimer); clearTimeout(longPress3Timer);
+  }else{
+    if(lockStage<4){
+      if(!twoEdgeZoom && !sideLocked) map.dragPan.enable();
+      map.touchZoomRotate.enable(twoEdgeZoom ? {around:"center"} : undefined);
+      if(!lockMode) map.doubleClickZoom.enable();
+    }
+    map.getCanvas().style.touchAction="";
+    hideLoupe();
+  }
+}
+
+function renderLoupe(){
+  ensureLoupeMap();
+  if(!loupeActive||!loupePoint||!loupeMap)return;
+  const dpr=window.devicePixelRatio||1;
+  if(loupeNeedsResize || loupeSizeSynced!==currentLoupeSize){
+    loupeOverlayCanvasEl.width=Math.round(currentLoupeSize*dpr);
+    loupeOverlayCanvasEl.height=Math.round(currentLoupeSize*dpr);
+    loupeMap.resize();
+    loupeSizeSynced=currentLoupeSize;
+    loupeNeedsResize=false;
+  }
+  const lngLat=map.unproject([loupePoint.x-loupeViewOff.x,loupePoint.y-loupeViewOff.y]);
+  const targetZoom=clamp(map.getZoom()+loupeZoom,0,22);
+  loupeMap.jumpTo({center:lngLat, zoom:targetZoom});
+  renderLoupeOverlay();
+}
+
+function renderLoupeOverlay(){
+  if(!loupeActive||!loupeMap||!loupeOverlayCtx) return;
+  const dpr=window.devicePixelRatio||1;
+  const ctx=loupeOverlayCtx;
+  ctx.clearRect(0,0,loupeOverlayCanvasEl.width,loupeOverlayCanvasEl.height);
+
+  if(frameEl.style.display !== "none"){
+    const fb=frameBoundsInMap();
+    const p1=loupeMap.project(map.unproject([fb.left,fb.top]));
+    const p2=loupeMap.project(map.unproject([fb.right,fb.bottom]));
+    const rx=Math.min(p1.x,p2.x)*dpr, ry=Math.min(p1.y,p2.y)*dpr;
+    const rw=Math.abs(p2.x-p1.x)*dpr, rh=Math.abs(p2.y-p1.y)*dpr;
+    ctx.save();
+    ctx.strokeStyle="#e04b4b";
+    ctx.lineWidth=2*dpr;
+    if(!frameEl.classList.contains("locked")){
+      ctx.setLineDash([6*dpr,4*dpr]);
+    }
+    ctx.strokeRect(rx,ry,rw,rh);
+    ctx.restore();
+  }
+
+  if(previewRectEl.classList.contains("show")){
+    const prLeft=parseFloat(previewRectEl.style.left);
+    const prTop=parseFloat(previewRectEl.style.top);
+    const prWidth=parseFloat(previewRectEl.style.width);
+    const prHeight=parseFloat(previewRectEl.style.height);
+    if(!isNaN(prLeft) && !isNaN(prTop) && !isNaN(prWidth) && !isNaN(prHeight)){
+      const p1=loupeMap.project(map.unproject([prLeft,prTop]));
+      const p2=loupeMap.project(map.unproject([prLeft+prWidth,prTop+prHeight]));
+      const rx=Math.min(p1.x,p2.x)*dpr, ry=Math.min(p1.y,p2.y)*dpr;
+      const rw=Math.abs(p2.x-p1.x)*dpr, rh=Math.abs(p2.y-p1.y)*dpr;
+      ctx.save();
+      ctx.fillStyle="rgba(40,167,69,0.25)";
+      ctx.fillRect(rx,ry,rw,rh);
+      ctx.strokeStyle="rgba(40,167,69,0.8)";
+      ctx.lineWidth=2*dpr;
+      ctx.strokeRect(rx,ry,rw,rh);
+      ctx.restore();
+    }
+  }
+}
+
+const mapCanvasEl=map.getCanvas();
+
+let touchGestureMode="";
+let touchStartTime=0;
+let touchStartPoints=[];
+let touchTwoFingerStartDistance=0;
+let touchTwoFingerStartCenter=null;
+let touchLoupeTwoFingerMode="";
+let touchLoupeLastCenter=null;
+let touchLoupeLastDistance=null;
+let touchLoupeDragLastLocal=null;
+
+function getTouchPoint(t,r){
+  return {x:t.clientX-r.left,y:t.clientY-r.top};
+}
+function getTouchCenter(touches){
+  return {
+    x:(touches[0].clientX+touches[1].clientX)/2,
+    y:(touches[0].clientY+touches[1].clientY)/2
+  };
+}
+function getTouchDistance(touches){
+  return Math.hypot(
+    touches[0].clientX-touches[1].clientX,
+    touches[0].clientY-touches[1].clientY
+  );
+}
+function pointInMagnifier(clientX,clientY){
+  if(!loupeActive)return false;
+  const r=magnifierEl.getBoundingClientRect();
+  return clientX>=r.left && clientX<=r.right && clientY>=r.top && clientY<=r.bottom;
+}
+function allTouchesOutsideMagnifier(touches){
+  if(touches.length!==2)return false;
+  return !pointInMagnifier(touches[0].clientX,touches[0].clientY) && !pointInMagnifier(touches[1].clientX,touches[1].clientY);
+}
+function cancelLoupePressTimers(){
+  clearTimeout(loupePressTimer);
+  clearTimeout(magPressTimer);
+  loupePressStart=null;
+  magPressStart=null;
+}
+function finishTouchGesture(){
+  clearTimeout(loupePressTimer);
+  clearTimeout(magPressTimer);
+  loupePressStart=null;
+  magPressStart=null;
+  touchGestureMode="";
+  touchStartTime=0;
+  touchStartPoints=[];
+  touchTwoFingerStartDistance=0;
+  touchTwoFingerStartCenter=null;
+  touchLoupeTwoFingerMode="";
+  touchLoupeLastCenter=null;
+  touchLoupeLastDistance=null;
+  touchLoupeDragLastLocal=null;
+}
+
+mapCanvasEl.addEventListener("pointerdown",e=>{
+  if(e.pointerType==="touch") return;
+  if(!loupeEnabled || lockStage===5) return;
+  e.preventDefault();
+  mapCanvasEl.setPointerCapture(e.pointerId);
+  const r=mapCanvasEl.getBoundingClientRect();
+  const p={x:e.clientX-r.left,y:e.clientY-r.top};
+
+  const now=Date.now(), dt=now-lastLoupeTapTime;
+  if(dt<300 && dt>0){
+    lastLoupeTapTime=0;
+    if(loupeActive){
+      hideLoupe();
+    }else{
+      setLoupeMode(false);
+    }
+    return;
+  }
+  lastLoupeTapTime=now;
+
+  loupeDragPoint=p;
+  mapDragging=true;
+  showLoupe(p);
+
+  clearTimeout(loupePressTimer);
+  loupePressStart={x:e.clientX,y:e.clientY};
+  if(isBoundaryInLoupe()){
+    loupePressTimer=setTimeout(()=>{
+      if(!loupePressStart)return;
+      if(!lockMode && lockStage===0) beginAutoLockModeAt(loupePressStart.x,loupePressStart.y);
+      if(lockMode) advanceLockAt(loupePressStart.x,loupePressStart.y);
+    },LOCK_LONGPRESS_MS);
+  }
+});
+
+function panLoupeTo(cur){
+  const dx=(cur.x-loupeDragPoint.x)*LOUPE_PAN_SCALE;
+  const dy=(cur.y-loupeDragPoint.y)*LOUPE_PAN_SCALE;
+  if((dx||dy) && !(twoEdge && lockStage===2) && lockStage<4 && !sideLocked) map.panBy([-dx,-dy],{duration:0});
+  loupeDragPoint=cur;
+  showLoupe(cur);
+}
+
+mapCanvasEl.addEventListener("pointermove",e=>{
+  if(e.pointerType==="touch") return;
+  if(!loupeEnabled||!mapDragging||!loupeDragPoint) return;
+  if(loupePressStart){
+    const dist=Math.hypot(e.clientX-loupePressStart.x,e.clientY-loupePressStart.y);
+    if(dist>LOCK_MOVE_CANCEL_PX){
+      clearTimeout(loupePressTimer);
+      loupePressStart=null;
+    }
+  }
+  const r=mapCanvasEl.getBoundingClientRect();
+  panLoupeTo({x:e.clientX-r.left,y:e.clientY-r.top});
+});
+
+function endLoupeDrag(){
+  if(!loupeEnabled) return;
+  mapDragging=false;
+  loupeDragPoint=null;
+  clearTimeout(loupePressTimer);
+  loupePressStart=null;
+  if(lockStage<4) syncCenterFromFrame();
+}
+
+let magFineMoved=false;
+function loupeFinePan(dx,dy){
+  if(!dx && !dy) return;
+  if((twoEdge && lockStage===2) || lockStage>=4 || sideLocked) return;
+  const s=1/Math.pow(2,loupeZoom);
+  map.panBy([-dx*s,-dy*s],{duration:0});
+  magFineMoved=true;
+}
+function endLoupeFinePan(){
+  if(!magFineMoved) return;
+  magFineMoved=false;
+  if(lockStage<4) syncCenterFromFrame();
+}
+
+function loupeLocalToLngLat(e){
+  ensureLoupeMap();
+  const r=magnifierEl.getBoundingClientRect();
+  // TouchEventにはclientX/clientYが無く、touches/changedTouchesの中に入っているため吸収する
+  const pt = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || e;
+  return loupeMap.unproject([pt.clientX-r.left,pt.clientY-r.top]);
+}
+
+let magDragLastLocal=null;
+
+magnifierEl.addEventListener("pointerdown",e=>{
+  if(e.pointerType==="touch") return;
+  if(!loupeEnabled || !loupeActive || !loupeMap || lockStage===5) return;
+  e.preventDefault();
+  magnifierEl.setPointerCapture(e.pointerId);
+
+  const now=Date.now(), dt=now-lastMagTapTime;
+  if(dt<300 && dt>0){
+    lastMagTapTime=0;
+    hideLoupe();
+    return;
+  }
+  lastMagTapTime=now;
+
+  const ll=loupeLocalToLngLat(e);
+  clearTimeout(magPressTimer);
+  magPressStart={x:e.clientX,y:e.clientY};
+  magDragLastLocal=null;
+  if(isBoundaryInLoupe()){
+    magPressTimer=setTimeout(()=>{
+      if(!magPressStart)return;
+      if(!lockMode && lockStage===0) beginAutoLockModeAtLngLat(ll);
+      if(lockMode) advanceLockAtLngLat(ll);
+    },LOCK_LONGPRESS_MS);
+  }
+});
+magnifierEl.addEventListener("pointermove",e=>{
+  if(e.pointerType==="touch") return;
+  if(!magPressStart)return;
+  const dist=Math.hypot(e.clientX-magPressStart.x,e.clientY-magPressStart.y);
+  if(dist>LOCK_MOVE_CANCEL_PX){
+    clearTimeout(magPressTimer);
+    magPressStart=null;
+  }
+  const r=magnifierEl.getBoundingClientRect();
+  const cur={x:e.clientX-r.left,y:e.clientY-r.top};
+  if(magDragLastLocal) loupeFinePan(cur.x-magDragLastLocal.x,cur.y-magDragLastLocal.y);
+  magDragLastLocal=cur;
+});
+magnifierEl.addEventListener("pointerup",e=>{
+  if(e.pointerType==="touch") return;
+  clearTimeout(magPressTimer);
+  magPressStart=null;
+  magDragLastLocal=null;
+  endLoupeFinePan();
+});
+magnifierEl.addEventListener("pointercancel",e=>{
+  if(e.pointerType==="touch") return;
+  clearTimeout(magPressTimer);
+  magPressStart=null;
+  magDragLastLocal=null;
+  endLoupeFinePan();
+});
+
+mapCanvasEl.addEventListener("pointerup",e=>{
+  if(e.pointerType==="touch") return;
+  endLoupeDrag();
+});
+mapCanvasEl.addEventListener("pointercancel",e=>{
+  if(e.pointerType==="touch") return;
+  endLoupeDrag();
+});
+
+function handleMapTouchStart(e){
+  if(lockStage===5 || e.touches.length!==2) return;
+  if(!allTouchesOutsideMagnifier(e.touches)) return;
+  e.preventDefault();
+  clearTimeout(loupePressTimer);
+  loupePressStart=null;
+  mapDragging=false;
+  loupeDragPoint=null;
+  touchGestureMode="map2tap";
+  touchStartTime=Date.now();
+  touchStartPoints=[
+    {x:e.touches[0].clientX,y:e.touches[0].clientY},
+    {x:e.touches[1].clientX,y:e.touches[1].clientY}
+  ];
+}
+
+function handleMapTouchStartOne(e){
+  if(!loupeEnabled || lockStage===5 || e.touches.length!==1) return;
+  if(pointInMagnifier(e.touches[0].clientX,e.touches[0].clientY)) return;
+  e.preventDefault();
+  const t=e.touches[0];
+  const r=mapCanvasEl.getBoundingClientRect();
+  const p=getTouchPoint(t,r);
+  const now=Date.now(), dt=now-lastLoupeTapTime;
+  if(dt<300 && dt>0){
+    lastLoupeTapTime=0;
+    if(loupeActive){
+      hideLoupe();
+    }else{
+      setLoupeMode(false);
+    }
+    finishTouchGesture();
+    return;
+  }
+  lastLoupeTapTime=now;
+  touchGestureMode="map1";
+  touchStartTime=now;
+  touchStartPoints=[{x:t.clientX,y:t.clientY}];
+  loupeDragPoint=p;
+  mapDragging=true;
+  showLoupe(p);
+
+  clearTimeout(loupePressTimer);
+  loupePressStart={x:t.clientX,y:t.clientY};
+  if(isBoundaryInLoupe()){
+    loupePressTimer=setTimeout(()=>{
+      if(!loupePressStart)return;
+      if(!lockMode && lockStage===0) beginAutoLockModeAt(loupePressStart.x,loupePressStart.y);
+      if(lockMode) advanceLockAt(loupePressStart.x,loupePressStart.y);
+    },LOCK_LONGPRESS_MS);
+  }
+}
+
+mapCanvasEl.addEventListener("touchstart",e=>{
+  if(e.touches.length===2){
+    handleMapTouchStart(e);
+    return;
+  }
+  handleMapTouchStartOne(e);
+},{passive:false});
+
+mapCanvasEl.addEventListener("touchmove",e=>{
+  if(touchGestureMode==="map2tap" && e.touches.length===2){
+    e.preventDefault();
+    const p0=touchStartPoints[0], p1=touchStartPoints[1];
+    if(Math.hypot(e.touches[0].clientX-p0.x,e.touches[0].clientY-p0.y)>=10 || Math.hypot(e.touches[1].clientX-p1.x,e.touches[1].clientY-p1.y)>=10){
+      touchGestureMode="map2move";
+    }
+    return;
+  }
+  if(!loupeEnabled || lockStage===5) return;
+
+  if(touchGestureMode!=="map1" || e.touches.length!==1)return;
+  e.preventDefault();
+  const t=e.touches[0];
+  if(loupePressStart){
+    const dist=Math.hypot(t.clientX-loupePressStart.x,t.clientY-loupePressStart.y);
+    if(dist>LOCK_MOVE_CANCEL_PX){
+      clearTimeout(loupePressTimer);
+      loupePressStart=null;
+    }
+  }
+  const r=mapCanvasEl.getBoundingClientRect();
+  panLoupeTo({x:t.clientX-r.left,y:t.clientY-r.top});
+});
+
+mapCanvasEl.addEventListener("touchend",e=>{
+  if(touchGestureMode==="map2tap" || touchGestureMode==="map2move"){
+    if(e.touches.length===0){
+      const elapsed=Date.now()-touchStartTime;
+      if(touchGestureMode==="map2tap" && elapsed<=250){
+        if(loupeActive){
+          setLoupeMode(false);
+        }else{
+          const center={x:(touchStartPoints[0].x+touchStartPoints[1].x)/2,y:(touchStartPoints[0].y+touchStartPoints[1].y)/2};
+          setLoupeMode(true);
+          const r=mapCanvasEl.getBoundingClientRect();
+          showLoupe({x:center.x-r.left,y:center.y-r.top});
+        }
+      }
+      finishTouchGesture();
+    }
+    return;
+  }
+  if(touchGestureMode!=="map1" || e.touches.length!==0)return;
+  e.preventDefault();
+  mapDragging=false;
+  loupeDragPoint=null;
+  clearTimeout(loupePressTimer);
+  loupePressStart=null;
+  if(lockStage<4) syncCenterFromFrame();
+  finishTouchGesture();
+},{passive:false});
+mapCanvasEl.addEventListener("touchcancel",()=>{
+  if(touchGestureMode==="map1"){
+    mapDragging=false;
+    loupeDragPoint=null;
+  }
+  finishTouchGesture();
+},{passive:false});
+
+function handleMagnifierTouchStart(e){
+  if(!loupeEnabled || !loupeActive || !loupeMap || lockStage===5)return;
+  if(e.touches.length!==1 && e.touches.length!==2)return;
+  e.preventDefault();
+  const now=Date.now();
+
+  if(e.touches.length===2){
+    cancelLoupePressTimers();
+    touchGestureMode="loupe2";
+    touchStartTime=now;
+    touchStartPoints=[
+      {x:e.touches[0].clientX,y:e.touches[0].clientY},
+      {x:e.touches[1].clientX,y:e.touches[1].clientY}
+    ];
+    touchTwoFingerStartDistance=getTouchDistance(e.touches);
+    touchTwoFingerStartCenter=getTouchCenter(e.touches);
+    touchLoupeTwoFingerMode="";
+    touchLoupeLastCenter=getTouchCenter(e.touches);
+    touchLoupeLastDistance=touchTwoFingerStartDistance;
+    return;
+  }
+
+  const t=e.touches[0];
+  const nowDt=now-lastMagTapTime;
+  if(nowDt<300 && nowDt>0){
+    lastMagTapTime=0;
+    hideLoupe();
+    finishTouchGesture();
+    return;
+  }
+  lastMagTapTime=now;
+  touchGestureMode="loupe1";
+  touchStartTime=now;
+  touchStartPoints=[{x:t.clientX,y:t.clientY}];
+  const r=magnifierEl.getBoundingClientRect();
+  touchLoupeDragLastLocal={x:t.clientX-r.left,y:t.clientY-r.top};
+  const pressLL=loupeLocalToLngLat(e);
+
+  clearTimeout(magPressTimer);
+  magPressStart={x:t.clientX,y:t.clientY};
+  if(isBoundaryInLoupe()){
+    magPressTimer=setTimeout(()=>{
+      if(!magPressStart)return;
+      if(!lockMode && lockStage===0) beginAutoLockModeAtLngLat(pressLL);
+      if(lockMode) advanceLockAtLngLat(pressLL);
+    },LOCK_LONGPRESS_MS);
+  }
+}
+
+magnifierEl.addEventListener("touchstart",handleMagnifierTouchStart,{passive:false});
+
+magnifierEl.addEventListener("touchmove",e=>{
+  if(!loupeEnabled || !loupeActive || !loupeMap)return;
+  if(touchGestureMode==="loupe2" && e.touches.length===2){
+    e.preventDefault();
+    const d=getTouchDistance(e.touches);
+    const c=getTouchCenter(e.touches);
+    const ratio=touchTwoFingerStartDistance>0 ? Math.abs(d-touchTwoFingerStartDistance)/touchTwoFingerStartDistance : 0;
+
+    if(touchLoupeTwoFingerMode!=="pinch" && ratio>LOUPE_PINCH_SWITCH_RATIO){
+      touchLoupeTwoFingerMode="pinch";
+    }else if(touchLoupeTwoFingerMode==="" && Math.hypot(c.x-touchTwoFingerStartCenter.x,c.y-touchTwoFingerStartCenter.y)>LOUPE_DRAG_START_PX){
+      touchLoupeTwoFingerMode="drag";
+    }
+
+    if(touchLoupeTwoFingerMode==="pinch"){
+      if(touchLoupeLastDistance!==null && touchLoupeLastDistance>0){
+        loupeZoom=clamp(loupeZoom+Math.log2(d/touchLoupeLastDistance)*2,0,8);
+        renderLoupe();
+      }
+    }else if(touchLoupeTwoFingerMode==="drag" && touchLoupeLastCenter){
+      const dx=c.x-touchLoupeLastCenter.x;
+      const dy=c.y-touchLoupeLastCenter.y;
+      if(dx||dy){
+        const s=1/Math.pow(2,loupeZoom);
+        loupeViewOff={x:loupeViewOff.x+dx*s,y:loupeViewOff.y+dy*s};
+        renderLoupe();
+      }
+    }
+    touchLoupeLastCenter=c;
+    touchLoupeLastDistance=d;
+    return;
+  }
+
+  if(touchGestureMode!=="loupe1" || e.touches.length!==1)return;
+  e.preventDefault();
+  const t=e.touches[0];
+  if(magPressStart){
+    const dist=Math.hypot(t.clientX-magPressStart.x,t.clientY-magPressStart.y);
+    if(dist>LOCK_MOVE_CANCEL_PX){
+      clearTimeout(magPressTimer);
+      magPressStart=null;
+    }
+  }
+  const r=magnifierEl.getBoundingClientRect();
+  const cur={x:t.clientX-r.left,y:t.clientY-r.top};
+  if(touchLoupeDragLastLocal) loupeFinePan(cur.x-touchLoupeDragLastLocal.x,cur.y-touchLoupeDragLastLocal.y);
+  touchLoupeDragLastLocal=cur;
+},{passive:false});
+
+magnifierEl.addEventListener("touchend",e=>{
+  if(touchGestureMode==="loupe2"){
+    if(e.touches.length===0){
+      const elapsed=Date.now()-touchStartTime;
+      if(touchLoupeTwoFingerMode==="" && elapsed<=250){
+        hideLoupe();
+      }
+      touchLoupeLastCenter=null;
+      touchLoupeLastDistance=null;
+      finishTouchGesture();
+    }
+    return;
+  }
+  if(touchGestureMode!=="loupe1" || e.touches.length!==0)return;
+  e.preventDefault();
+  clearTimeout(magPressTimer);
+  magPressStart=null;
+  touchLoupeDragLastLocal=null;
+  endLoupeFinePan();
+  finishTouchGesture();
+},{passive:false});
+
+magnifierEl.addEventListener("touchcancel",()=>{
+  clearTimeout(magPressTimer);
+  endLoupeFinePan();
+  finishTouchGesture();
+},{passive:false});
+
+/* ===================== 前回位置の保存 ===================== */
+function currentViewToSave(){
+  if(lockStage>=4){
+    const side=clampSideValue(sideEl.value);
+    const z=clamp(Math.log2(WEBMERC_K*Math.cos(deg2rad(centerLat))*frameSizePx/side),0,22);
+    return {lat:centerLat,lon:centerLon,zoom:z};
+  }
+  if(twoEdge) return null;
+  const c=map.getCenter();
+  return {lat:c.lat,lon:c.lng,zoom:map.getZoom()};
+}
+let viewSaveTimer=null;
+function saveLastView(){
+  clearTimeout(viewSaveTimer);
+  const v=currentViewToSave();
+  if(!v) return;
+  try{ localStorage.setItem(VIEW_STORAGE_KEY,JSON.stringify(v)); }catch(e){}
+}
+map.on("moveend",()=>{ clearTimeout(viewSaveTimer); viewSaveTimer=setTimeout(saveLastView,400); });
+window.addEventListener("pagehide",saveLastView);
+document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="hidden") saveLastView(); });
+
+/* ===================== 中心＋の標高表示 ===================== */
+async function fetchElevTile(src,x,y,signal){
+  const key=`${src.path}/${src.z}/${x}/${y}`;
+  if(elevNegCache.has(key)) return null;
+  const hit=elevTileCache.get(key);
+  if(hit){ elevTileCache.delete(key); elevTileCache.set(key,hit); return hit; }
+  const ctl=new AbortController();
+  const timer=setTimeout(()=>ctl.abort(),ELEV_TIMEOUT_MS);
+  const onAbort=()=>ctl.abort();
+  signal.addEventListener("abort",onAbort);
+  try{
+    const u=tileURL(src,x,y);
+    const r=await fetch(u,{cache:"force-cache",signal:ctl.signal});
+    if(r.status===404){ if(elevNegCache.size>=ELEV_NEG_MAX) elevNegCache.clear(); elevNegCache.add(key); return null; }
+    if(!r.ok) return undefined;
+    const blob=await r.blob();
+    if(!blob.type.includes("png")) return undefined;
+    const bmp=await createImageBitmap(blob);
+    let res;
+    try{ res=decodeDemBitmap(bmp,u); }finally{ bmp.close(); }
+    if(res.kind!=="ok"){ if(elevNegCache.size>=ELEV_NEG_MAX) elevNegCache.clear(); elevNegCache.add(key); return null; }
+    elevTileCache.set(key,res);
+    while(elevTileCache.size>ELEV_CACHE_MAX) elevTileCache.delete(elevTileCache.keys().next().value);
+    return res;
+  }catch(e){
+    return undefined;
+  }finally{
+    clearTimeout(timer);
+    signal.removeEventListener("abort",onAbort);
+  }
+}
+
+function elevPixelAt(res,src,latv,lonv){
+  const n=2**src.z;
+  const gx=(lonv+180)/360*n*256;
+  const gy=(1-Math.asinh(Math.tan(deg2rad(latv)))/Math.PI)/2*n*256;
+  const t=xyz(lonv,latv,src.z);
+  const lx=clamp(Math.floor(gx)-t.x*256,0,255), ly=clamp(Math.floor(gy)-t.y*256,0,255);
+  const i=ly*256+lx;
+  return res.mask[i] ? res.elev[i] : NaN;
+}
+
+async function lookupElevation(latv,lonv,signal){
+  const SOURCES=activeSources();
+  const got=await Promise.all(SOURCES.map(async src=>{
+    const t=xyz(lonv,latv,src.z);
+    return {src,tile:await fetchElevTile(src,t.x,t.y,signal)};
+  }));
+  if(signal.aborted) return {aborted:true};
+  let failedAbove=false;
+  for(const {src,tile} of got){
+    if(tile===undefined){ failedAbove=true; continue; }
+    if(!tile) continue;
+    const v=elevPixelAt(tile,src,latv,lonv);
+    if(Number.isFinite(v)) return {ok:true,value:v,name:src.name.replace("DEM",""),provisional:failedAbove};
+  }
+  return failedAbove ? {fail:true} : {nodata:true};
+}
+
+function elevVisible(){
+  return elevOn && lockStage<4 && centerMarkEl.style.display!=="none";
+}
+function setElevText(text,stale){
+  elevBadgeEl.textContent=text;
+  elevBadgeEl.classList.toggle("stale",!!stale);
+}
+async function runElevLookup(){
+  if(!elevVisible()) return;
+  const token=++elevToken;
+  if(elevAbort) elevAbort.abort();
+  const ctl=new AbortController(); elevAbort=ctl;
+  const p=map.unproject([mapAreaEl.clientWidth/2,mapAreaEl.clientHeight/2]);
+  const latv=clamp(p.lat,-85,85), lonv=p.lng;
+  if(!elevBadgeEl.textContent) setElevText("標高 …",true);
+  let r;
+  try{ r=await lookupElevation(latv,lonv,ctl.signal); }catch(e){ r={fail:true}; }
+  if(token!==elevToken || !elevVisible()) return;
+  if(r.ok) setElevText(`標高 ${r.value.toFixed(1)} m (${r.name}${r.provisional?"・暫定":""})`,false);
+  else if(r.nodata) setElevText("標高 データなし",false);
+  else setElevText("標高 —",false);
+}
+function scheduleElevLookup(delay){
+  clearTimeout(elevTimer);
+  elevTimer=setTimeout(runElevLookup,delay);
+}
+function updateElevBadge(){
+  const show=elevVisible();
+  elevBadgeEl.style.display=show ? "block" : "none";
+  if(!show){
+    clearTimeout(elevTimer);
+    elevToken++;
+    if(elevAbort){ elevAbort.abort(); elevAbort=null; }
+    return;
+  }
+  scheduleElevLookup(0);
+}
+function setElevOn(on,save){
+  elevOn=!!on;
+  elevBtnEl.classList.toggle("active",elevOn);
+  elevBtnEl.setAttribute("aria-pressed",String(elevOn));
+  if(!elevOn) elevBadgeEl.textContent="";
+  if(save){ try{ localStorage.setItem(ELEV_STORAGE_KEY,elevOn?"1":"0"); }catch(e){} }
+  updateElevBadge();
+}
+elevBtnEl.addEventListener("click",()=>setElevOn(!elevOn,true));
+map.on("movestart",()=>{ if(elevVisible()) elevBadgeEl.classList.add("stale"); });
+map.on("moveend",()=>{ if(elevVisible()) scheduleElevLookup(300); });
+try{ if(localStorage.getItem(ELEV_STORAGE_KEY)==="1") setElevOn(true,false); }catch(e){}
+
+/* ===================== DEM優先モード切替 ===================== */
+const demModeBtnEls=document.querySelectorAll("#demModeBtns .demtag");
+function applyDemMode(mode,save){
+  demMode = (mode==="1a") ? "1a" : "5a";
+  demModeBtnEls.forEach(b=>b.classList.toggle("active", b.dataset.dem===demMode));
+  if(save){ try{ localStorage.setItem(DEM_MODE_KEY,demMode); }catch(e){} }
+}
+demModeBtnEls.forEach(b=>b.addEventListener("click",()=>applyDemMode(b.dataset.dem,true)));
+applyDemMode(demMode,false);
+
+const styleBtnEls=document.querySelectorAll("#styleBtns .styleBtn");
+function refreshStyleBtns(){
+  styleBtnEls.forEach(b=>b.classList.toggle("active",b.dataset.style===currentStyleKey));
+  mapCreditEl.textContent=TILE_STYLES[currentStyleKey].credit;
+}
+function applyMapStyle(key){
+  if(!isValidStyleKey(key) || key===currentStyleKey) return;
+  currentStyleKey=key;
+  try{ localStorage.setItem(STYLE_STORAGE_KEY,key); }catch(e){}
+  lastMapError="";
+  map.setStyle(styleFor(key),{diff:false});
+  if(loupeMap) loupeMap.setStyle(styleFor(key),{diff:false});
+  refreshStyleBtns();
+}
+styleBtnEls.forEach(b=>b.addEventListener("click",()=>applyMapStyle(b.dataset.style)));
+refreshStyleBtns();
+updateLockGuidance();
+
+/* ===================== 生成結果と取得範囲の対応 ===================== */
+function currentRange(){ return {lat:centerLat, lon:centerLon, side:+sideEl.value, size:currentSize}; }
+function sameRange(a,b){
+  return !!a && !!b && Math.abs(a.lat-b.lat)<1e-6 && Math.abs(a.lon-b.lon)<1e-6 && a.side===b.side && a.size===b.size;
+}
+function refreshResultValidity(){
+  if(lastRun && !sameRange(lastRun,currentRange())){
+    lastPNG=null; lastJSON=null; lastRun=null; lastHeights=null;
+    zipBtnEl.disabled=true; cliffBtnEl.disabled=true;
+  }
+}
+
+function xyToLatLon(x,y,clat,clon){
+  const lat0=deg2rad(clat), dLat=y/EARTH_R, dLon=x/(EARTH_R*Math.max(1e-12,Math.cos(lat0)));
+  return [rad2deg(dLon)+clon, rad2deg(dLat)+clat];
+}
+function squareBounds(clat,clon,L){
+  const h=L/2;
+  const dLat=rad2deg(h/EARTH_R), dLon=rad2deg(h/(EARTH_R*Math.cos(deg2rad(clat))));
+  return {north:clat+dLat, south:clat-dLat, west:clon-dLon, east:clon+dLon};
+}
+
+/* ===================== 進捗/レポートUI表示 ===================== */
+let processStartedAt=0, lastActivityAt=0;
+let dotCount = 0;
+let currentStatusObj = { name: "", state: "", pos: "", detail: "" };
+let dotTimer = null;
+
+function elapsed(){
+  const sec=Math.floor((Date.now()-processStartedAt)/1000);
+  return String(Math.floor(sec/60)).padStart(2,"0")+":"+String(sec%60).padStart(2,"0");
+}
+function progress(v){
+  barEl.style.width=clamp(v,0,100)+"%";
+  pgPctEl.textContent=`全体進捗：${clamp(v,0,100).toFixed(1)}%`;
+}
+function showProgressView(){progressViewEl.style.display="";reportViewEl.style.display="none";}
+function showReportView(){progressViewEl.style.display="none";reportViewEl.style.display="";}
+
+function startDotAnimation(){
+  if(!dotTimer){
+    dotTimer = setInterval(()=>{
+      dotCount = (dotCount + 1) % 6;
+      renderStatusDetail();
+    }, Math.round(1000/6));
+  }
+}
+
+function stopDotAnimation(){
+  dotCount = 0;
+  if(dotTimer){
+    clearInterval(dotTimer);
+    dotTimer = null;
+  }
+}
+
+function renderStatusDetail(){
+  if(!currentStatusObj.name && !currentStatusObj.state && !currentStatusObj.detail && !currentStatusObj.pos){
+    pgDetailEl.innerHTML = "";
+    return;
+  }
+  const dots = ".".repeat(dotCount);
+  const dotsHtml = `<span style="display:inline-block;width:5ch;font-family:ui-monospace,Menlo,Consolas,monospace;text-align:left">${dots}</span>&nbsp;&nbsp;`;
+  let line1Text = currentStatusObj.name ? `${currentStatusObj.name} ${currentStatusObj.state}${dotsHtml}` : `${currentStatusObj.state}${dotsHtml}`;
+  if(currentStatusObj.pos){
+    line1Text += `${currentStatusObj.pos}`;
+  }
+  const line2Html = currentStatusObj.detail ? `<div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;margin-top:2px">${currentStatusObj.detail}</div>` : "";
+  pgDetailEl.innerHTML = `<div>${line1Text}</div>${line2Html}`;
+}
+
+function setActivity(srcName, state, detail, v, pos=""){
+  lastActivityAt = Date.now();
+  showProgressView();
+  currentStatusObj = { name: srcName, state: state, pos: pos, detail: detail };
+  renderStatusDetail();
+  if(v !== undefined) progress(v);
+}
+
+function setSimpleStatus(text, v){
+  lastActivityAt = Date.now();
+  showProgressView();
+  currentStatusObj = { name: "", state: text, pos: "", detail: "" };
+  renderStatusDetail();
+  if(v !== undefined) progress(v);
+}
+
+setInterval(()=>{
+  if(processStartedAt && pngBtnEl.disabled){
+    pgTimeEl.textContent = `経過時間：${elapsed()}`;
+    if(Date.now() - lastActivityAt > 30000){
+      currentStatusObj = { name: "", state: "通信待機", pos: "", detail: "" };
+      renderStatusDetail();
+    }
+  }
+}, 500);
+
+const ELEV_DIFF_CAUTION_M=200, ELEV_DIFF_DANGER_M=1000;
+function updateWarning(probePct, elevDiffM){
+  const lines=[];
+  let severity=0;
+
+  const blank=100-probePct;
+  if(blank>=50){
+    severity=Math.max(severity,2);
+    lines.push(`⚠ DEM 空白域が広範囲です<br>推定空白率：約${blank.toFixed(1)}%<br>空白部分は NoData として保持します`);
+  }else if(blank>=25){
+    severity=Math.max(severity,1);
+    lines.push(`⚠ DEM 空白域があります<br>推定空白率：約${blank.toFixed(1)}%<br>空白部分は NoData として保持します`);
+  }
+
+  if(Number.isFinite(elevDiffM)){
+    if(elevDiffM>=ELEV_DIFF_DANGER_M){
+      severity=Math.max(severity,2);
+      lines.push(`⚠ 標高差が非常に大きい範囲です(概算 約${elevDiffM.toFixed(0)}m)<br>TheoTown取込み後、起伏がかなり大味になる可能性があります`);
+    }else if(elevDiffM>=ELEV_DIFF_CAUTION_M){
+      severity=Math.max(severity,1);
+      lines.push(`⚠ 標高差が大きい範囲です(概算 約${elevDiffM.toFixed(0)}m)<br>TheoTown取込み後、起伏が大味になる可能性があります`);
+    }
+  }
+
+  if(lines.length===0){
+    warnBoxEl.innerHTML="";
+    warnBoxEl.style.display="none";
+  }else{
+    warnBoxEl.className="warnbox "+(severity>=2?"danger":"caution");
+    warnBoxEl.innerHTML=lines.join("<br>");
+    warnBoxEl.style.display="block";
+  }
+}
+
+/* ===================== GSI DEM タイル取得・ピクセル処理エンジン ===================== */
+function xyz(lonv,latv,z){
+  const n=2**z;
+  const x=Math.floor((lonv+180)/360*n);
+  const latr=deg2rad(latv);
+  const y=Math.floor((1-Math.asinh(Math.tan(latr))/Math.PI)/2*n);
+  return {x:clamp(x,0,n-1),y:clamp(y,0,n-1)};
+}
+function tileURL(src,x,y){return `https://cyberjapandata.gsi.go.jp/xyz/${src.path}/${src.z}/${x}/${y}.png`;}
+
+function decodeDemBitmap(bmp,u){
+  if(bmp.width!==256||bmp.height!==256)throw new Error(`画像サイズ ${bmp.width}×${bmp.height}`);
+  const c=document.createElement("canvas");c.width=256;c.height=256;
+  const g=c.getContext("2d",{willReadFrequently:true});if(!g)throw new Error("Canvas 取得失敗");
+  g.drawImage(bmp,0,0);const d=g.getImageData(0,0,256,256).data;
+  const elevArr=new Float32Array(65536),mask=new Uint8Array(65536);let valid=0,min=Infinity,max=-Infinity;
+  for(let i=0,p=0;i<65536;i++,p+=4){
+    const R=d[p],G=d[p+1],B=d[p+2],A=d[p+3],code=R*65536+G*256+B;
+    if(A===0||code===NODATA||(R===128&&G===0&&B===0)){elevArr[i]=NaN;continue;}
+    const h=code<NODATA?code*0.01:(code-16777216)*0.01;
+    if(!Number.isFinite(h)||h<-1000||h>10000){elevArr[i]=NaN;continue;}
+    mask[i]=1;elevArr[i]=h;valid++;min=Math.min(min,h);max=Math.max(max,h);
+  }
+  if(!valid)return {kind:"all-nodata",url:u};
+  return {kind:"ok",url:u,elev:elevArr,mask,min,max};
+}
+
+async function fetchTile(src,x,y,onPhase){
+  const u=tileURL(src,x,y);
+  const TIMEOUT_MS=8000;
+  let lastErr="";
+  for(let attempt=1;attempt<=2;attempt++){
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),TIMEOUT_MS);
+    try{
+      if(onPhase) onPhase("取得中");
+      const r=await fetch(u,{cache:"force-cache",signal:controller.signal});
+      if(r.status===404)return {kind:"unavailable",url:u};
+      if(!r.ok)throw new Error("HTTP "+r.status);
+      const blob=await r.blob();
+      if(!blob.type.includes("png"))throw new Error("PNG ではない応答");
+
+      if(onPhase) onPhase("検証中");
+      const bmp=await createImageBitmap(blob);
+      try{
+        return decodeDemBitmap(bmp,u);
+      }finally{bmp.close();}
+    }catch(e){
+      lastErr=e?.name==="AbortError"?`タイムアウト (${TIMEOUT_MS/1000}秒)`:e?.message||String(e);
+      if(attempt<2)await new Promise(r=>setTimeout(r,250));
+    }finally{clearTimeout(timer);}
+  }
+  return {kind:"network",url:u,error:lastErr};
+}
+
+function neededTiles(src,b){
+  const a=xyz(b.west,b.north,src.z), z=xyz(b.east,b.south,src.z);
+  const n=2**src.z;
+  const minX=Math.max(0,Math.min(a.x,z.x)-1), maxX=Math.min(n-1,Math.max(a.x,z.x)+1);
+  const minY=Math.max(0,Math.min(a.y,z.y)-1), maxY=Math.min(n-1,Math.max(a.y,z.y)+1);
+  const out=[];
+  for(let y=minY;y<=maxY;y++) for(let x=minX;x<=maxX;x++) out.push({x,y});
+  return out;
+}
+
+async function buildSource(src,b,si){
+  const tiles=neededTiles(src,b),mapTiles=new Map();
+  let unavailable=0,bad=0,done=0,cursor=0;
+  const total=tiles.length;
+  const concurrency=Math.min(8,total),started=Date.now(),LIMIT=src.timeoutMs||30000;
+  let stop=false;
+
+  const basePct = 5 + si * 9;
+  const stepPct = 9 / Math.max(1, total);
+
+  async function worker(){
+    while(!stop){
+      if(Date.now()-started>=LIMIT){stop=true;return;}
+      const i=cursor++;
+      if(i>=total)return;
+      const t=tiles[i];
+
+      const r=await fetchTile(src,t.x,t.y,(phase)=>{
+        const posText = `現在：${t.x}/${t.y}`;
+        const detailText = `タイル：${done}/${total} 未提供：${unavailable} / エラー：${bad}`;
+        setActivity(src.name, phase, detailText, basePct + done * stepPct, posText);
+      });
+
+      done++;
+      if(r.kind==="ok")mapTiles.set(t.x+","+t.y,r);
+      else if(r.kind==="unavailable")unavailable++;
+      else bad++;
+
+      const detailText = `タイル：${done}/${total} 未提供：${unavailable} / エラー：${bad}`;
+      setActivity(src.name, "検証中", detailText, basePct + done * stepPct, "");
+    }
+  }
+  await Promise.all(Array.from({length:concurrency},()=>worker()));
+  return {src,tiles,mapTiles,unavailable,bad,timedOut:done<total};
+}
+
+function elevAtGlobalPixel(ds,gx,gy){
+  const tx=Math.floor(gx/256), ty=Math.floor(gy/256);
+  const tr=ds.mapTiles.get(tx+","+ty);
+  if(!tr) return NaN;
+  let lx=gx-tx*256, ly=gy-ty*256;
+  lx=Math.min(255,Math.max(0,Math.floor(lx))); ly=Math.min(255,Math.max(0,Math.floor(ly)));
+  const i=ly*256+lx;
+  return tr.mask[i] ? tr.elev[i] : NaN;
+}
+function tileSample(ds,latv,lonv){
+  const src=ds.src, n=2**src.z;
+  const gx=(lonv+180)/360*n*256-0.5;
+  const gy=(1-Math.asinh(Math.tan(deg2rad(latv)))/Math.PI)/2*n*256-0.5;
+  const x0=Math.floor(gx), y0=Math.floor(gy);
+  const tx=gx-x0, ty=gy-y0;
+  const vals=[];
+  for(const [gxx,gyy,w] of [[x0,y0,(1-tx)*(1-ty)],[x0+1,y0,tx*(1-ty)],[x0,y0+1,(1-tx)*ty],[x0+1,y0+1,tx*ty]]){
+    const v=elevAtGlobalPixel(ds,gxx,gyy);
+    if(Number.isFinite(v)) vals.push([v,w]);
+  }
+  if(!vals.length)return NaN;
+
+  // 崖・護岸セル判定：4点間の標高差が閾値以上なら、バイリニア補間で
+  // 壁の両側を混ぜてなだらかにしてしまうのを避け、高い側の値をそのまま採用する
+  if(vals.length>1){
+    let vMax=-Infinity, vMin=Infinity;
+    for(const [v] of vals){ if(v>vMax)vMax=v; if(v<vMin)vMin=v; }
+    if(vMax-vMin >= CLIFF_THRESHOLD_M) return vMax;
+  }
+
+  let sw=0,s=0;for(const [v,w] of vals){s+=v*w;sw+=w;}
+  return sw?s/sw:NaN;
+}
+
+function tileRowHTML(d){
+  return `<div class="tilehead">${d.src.name}：${d.tiles.length}</div>`
+    +`<div class="tilestat-row">`
+      +`<span class="c1">有効：</span><span class="c2">${d.mapTiles.size.toLocaleString()}</span>`
+      +`<span class="c3">/ 未提供：</span><span class="c4">${d.unavailable.toLocaleString()}</span>`
+      +`<span class="c5">/ エラー：</span><span class="c6">${d.bad.toLocaleString()}</span>`
+      +`<span class="c7">${d.timedOut ? "タイムアウト" : ""}</span>`
+    +`</div>`;
+}
+
+/* ===================== メイン処理実行ルーチン ===================== */
+async function run(){
+  if(isRunning) return;
+  isRunning = true;
+
+  const SOURCES=activeSources();
+  pngBtnEl.disabled=true; zipBtnEl.disabled=true; cliffBtnEl.disabled=true; lastPNG=null; lastJSON=null; lastRun=null; lastHeights=null;
+  processStartedAt=Date.now(); lastActivityAt=processStartedAt;
+  startDotAnimation();
+  showProgressView();
+  progress(0); pgTimeEl.textContent="経過時間：00:00"; warnBoxEl.style.display="none";
+
+  try{
+    const startRange=currentRange();
+    const clat=startRange.lat, clon=startRange.lon, L=startRange.side, N=startRange.size;
+    if(!Number.isFinite(clat)||!Number.isFinite(clon)||clat<=-85||clat>=85||clon<-180||clon>180||!Number.isFinite(L)||L<100||L>100000)
+      throw new Error("入力値が不正です。1辺の距離は100〜100000mで指定してください。");
+    const b=squareBounds(clat,clon,L);
+    if(b.west<-180||b.east>180) throw new Error("日付変更線をまたぐ範囲には対応していません。");
+
+    let totalNeededTiles = 0;
+    for(let si=0; si<SOURCES.length; si++){
+      totalNeededTiles += neededTiles(SOURCES[si], b).length;
+    }
+    const MAX_TILES_LIMIT = 2000;
+    if(totalNeededTiles > MAX_TILES_LIMIT){
+      throw new Error(`範囲が広すぎます（必要タイル概算: ${totalNeededTiles}枚 / 上限: ${MAX_TILES_LIMIT}枚）。1辺の距離を小さくするか、出力サイズを下げてください。`);
+    }
+
+    const mpp=L/N;
+    setSimpleStatus("対象範囲を確定しました", 2);
+
+    const datasets=[];
+    for(let si=0;si<SOURCES.length;si++){
+      const src=SOURCES[si];
+      setActivity(src.name, "取得中", "通信準備中", 5 + si * 9);
+      const ds=await buildSource(src,b,si);
+      datasets.push(ds);
+      progress(5+(si+1)*9);
+    }
+
+    const h=L/2;
+    const probeN=31;
+    let probeCovered=0, probeTotal=probeN*probeN;
+    const probeHits=new Array(datasets.length).fill(0);
+    let probeMin=Infinity, probeMax=-Infinity;
+    for(let j=0;j<probeN;j++) for(let i=0;i<probeN;i++){
+      const x=-h+(i+.5)*L/probeN, y=h-(j+.5)*L/probeN;
+      const [lo,la]=xyToLatLon(x,y,clat,clon);
+      for(let si=0;si<datasets.length;si++){
+        const q=tileSample(datasets[si],la,lo);
+        if(Number.isFinite(q)){
+          probeCovered++;probeHits[si]++;
+          if(q<probeMin) probeMin=q;
+          if(q>probeMax) probeMax=q;
+          break;
+        }
+      }
+    }
+    if(probeCovered===0) throw new Error("指定範囲に有効な DEM がありません。");
+    const probePct=probeCovered/probeTotal*100;
+    const probeElevDiff = (probeMin<=probeMax) ? (probeMax-probeMin) : NaN;
+    updateWarning(probePct, probeElevDiff);
+
+    const usedProbe=datasets.filter((_,i)=>probeHits[i]>0);
+    setSimpleStatus(`DEM 混在統合中 (${usedProbe.map(d=>d.src.name).join(" + ")})`, 55);
+
+    const values=new Float32Array(N*N), validArr=new Uint8Array(N*N), sourceIndex=new Int8Array(N*N);
+    sourceIndex.fill(-1);
+    const nodataCnt=new Uint8Array(N*N); // セル内でNoDataだったサブサンプル数(v12-15:水路補完用)
+    let vmin=Infinity,vmax=-Infinity,validCount=0, waterGapClosed=0;
+
+    // 面平均化：1出力セルをK×Kのサブサンプル点で評価し、有効標高を単純平均する。
+    // K=2は実機比較検証(人工DEM200条件+実GSI DEM14条件+TheoTown実投入)で確定した採用値。
+    // 各サブサンプル点のtileSample()は崖・護岸セルでは補間せず最大値を返すため、
+    // 崖をまたぐセルはK個の「高い側の値」が多数を占めやすく、平均後も段差が残りやすい。
+    const K=2;
+    const VALID_RATE_THRESHOLD=0.5;
+    const K2=K*K;
+
+    for(let py=0;py<N;py++){
+      // 出力セル境界をN等分から直接定義（半開区間）。
+      const yT=h-py*L/N;
+      const yB=h-(py+1)*L/N;
+      for(let px=0;px<N;px++){
+        const xL=-h+px*L/N;
+        const xR=-h+(px+1)*L/N;
+
+        let sum=0, validSamples=0;
+        // metadata用：セル内で有効だったサンプルのうち、最高z DEMを代表源として保持。
+        let found=-1, representativeZ=-1;
+        // 崖・滝判定用：K個のサブサンプル値そのものを保持しておく。
+        const subVals=[];
+
+        for(let siy=0;siy<K;siy++){
+          const sy=yB+(siy+0.5)*(yT-yB)/K;
+          for(let six=0;six<K;six++){
+            const sx=xL+(six+0.5)*(xR-xL)/K;
+            const [lo,la]=xyToLatLon(sx,sy,clat,clon);
+
+            // 各サンプル点で現行の「最高z優先」DEM選択をそのまま実行。
+            let sample=NaN, sampleSource=-1, sampleZ=-1;
+            for(let si=0;si<datasets.length;si++){
+              const q=tileSample(datasets[si],la,lo);
+              if(Number.isFinite(q) && datasets[si].src.z > sampleZ){
+                sampleZ=datasets[si].src.z;
+                sample=q;
+                sampleSource=si;
+              }
+            }
+
+            if(Number.isFinite(sample)){
+              sum+=sample;
+              validSamples++;
+              subVals.push(sample);
+              if(sampleZ>representativeZ){
+                representativeZ=sampleZ;
+                found=sampleSource;
+              }
+            }
+          }
+        }
+
+        const idx=py*N+px;
+        nodataCnt[idx]=K2-validSamples;
+        const validRate=validSamples/K2;
+        if(validRate>=VALID_RATE_THRESHOLD){
+          // 崖・滝セル判定：K個のサブサンプル間の標高差が閾値以上なら、
+          // 平均して中間段を作らず、最大値(高い側)をそのまま採用する。
+          // tileSample()内の崖判定(4点補間の窓)だけでは、K=2平均化の外側で
+          // 「上側を検出したサブサンプル」と「下側を検出したサブサンプル」が
+          // 混ざって中間値に戻ってしまうケースをここで防ぐ。
+          let v;
+          if(validSamples>1){
+            const subMax=Math.max(...subVals), subMin=Math.min(...subVals);
+            v=(subMax-subMin>=CLIFF_THRESHOLD_M) ? subMax : sum/validSamples;
+          }else{
+            v=sum/validSamples;
+          }
+          values[idx]=v;
+          validArr[idx]=1;
+          sourceIndex[idx]=found;
+          vmin=Math.min(vmin,v);
+          vmax=Math.max(vmax,v);
+          validCount++;
+        }else{
+          values[idx]=NaN;
+          sourceIndex[idx]=-1;
+        }
+      }
+
+      if((py&7)===0){
+        setActivity("DEM 混在統合", "処理中", `行：${py+1}/${N} 有効ピクセル：${validCount.toLocaleString()} /${(N*N).toLocaleString()}`, 55+py/N*28);
+        await new Promise(r=>setTimeout(r,0));
+      }
+    }
+    // 水路の途切れ補完(v12-15):部分的にNoDataを含む陸セルが、反対側の隣接2セルとも水に挟まれている場合は水にする。
+    // 判定は補完前の水マスクのスナップショットで行うため連鎖拡大しない。フレーム外は水とみなさない。
+    if(WATER_GAP_CLOSE && validCount){
+      const wasWater=new Uint8Array(N*N);
+      for(let i=0;i<N*N;i++) wasWater[i]=validArr[i]?0:1;
+      const isW=(x,y)=>(x>=0&&y>=0&&x<N&&y<N)&&wasWater[y*N+x]===1;
+      const PAIRS=[[-1,0,1,0],[0,-1,0,1],[-1,-1,1,1],[-1,1,1,-1]];
+      for(let y=0;y<N;y++) for(let x=0;x<N;x++){
+        const i=y*N+x;
+        if(!validArr[i]||nodataCnt[i]<1) continue;
+        for(const [ax,ay,bx,by] of PAIRS){
+          if(isW(x+ax,y+ay)&&isW(x+bx,y+by)){
+            validArr[i]=0; values[i]=NaN; sourceIndex[i]=-1; validCount--; waterGapClosed++;
+            break;
+          }
+        }
+      }
+      if(waterGapClosed){
+        vmin=Infinity; vmax=-Infinity;
+        for(let i=0;i<N*N;i++) if(validArr[i]){ const v=values[i]; if(v<vmin)vmin=v; if(v>vmax)vmax=v; }
+      }
+    }
+    if(!validCount) throw new Error("有効な標高値がありません。");
+
+    const dynMinElev = vmin;
+    const dynMaxElev = (vmax === vmin) ? vmin + 1 : vmax;
+
+    setActivity("TheoTown PNG", "生成中", `標高 ${dynMinElev.toFixed(1)}～${dynMaxElev.toFixed(1)}m を ${THEO_LEVELS} 階調・陸グレー ${THEO_LAND_MIN_GRAY}〜${THEO_MAX_GRAY} へ変換 (${N}×${N})`, 86);
+    const c=document.createElement("canvas");c.width=N;c.height=N;
+    const ctx=c.getContext("2d"),img=ctx.createImageData(N,N);
+    const hts=new Uint8Array(N*N);
+    for(let i=0;i<N*N;i++){
+      const p=i*4;
+      if(validArr[i]){
+        const z=clamp(values[i],dynMinElev,dynMaxElev);
+        const t=(z-dynMinElev)/(dynMaxElev-dynMinElev);
+        const level=Math.round(t*(THEO_LEVELS-1));
+        // 水位固定(v12-15):陸は THEO_LAND_MIN_GRAY〜THEO_MAX_GRAY に載せる(グレー0〜10は水の帯なので陸に使わない)
+        const g=Math.round(THEO_LAND_MIN_GRAY+level*(THEO_MAX_GRAY-THEO_LAND_MIN_GRAY)/(THEO_LEVELS-1));
+        hts[i]=level+CLIFF_LAND_BASE_H;
+        img.data[p]=g; img.data[p+1]=g; img.data[p+2]=g; img.data[p+3]=255;
+      }else{
+        img.data[p]=THEO_NODATA_GRAY; img.data[p+1]=THEO_NODATA_GRAY; img.data[p+2]=THEO_NODATA_GRAY; img.data[p+3]=0;
+      }
+    }
+    ctx.putImageData(img,0,0);
+    lastPNG=await new Promise(res=>c.toBlob(res,"image/png"));
+    if(!lastPNG) throw new Error("PNG 生成に失敗しました。");
+    if(lastPNG.type!=="image/png") throw new Error("生成結果が PNG ではありません。");
+    const checkBmp=await createImageBitmap(lastPNG);
+    const checkBmpW=checkBmp.width, checkBmpH=checkBmp.height;
+    try{ if(checkBmpW!==N||checkBmpH!==N) throw new Error(`生成 PNG サイズ異常：${checkBmpW}×${checkBmpH}`); }
+    finally{checkBmp.close();}
+
+    const pngBytes=new Uint8Array(await lastPNG.arrayBuffer());
+    const PNG_SIG=[0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A];
+    const sigOk=PNG_SIG.every((v,i)=>pngBytes[i]===v);
+    const inspection={ sizeOk:checkBmpW===N&&checkBmpH===N, pngSignatureOk:sigOk, isPngType:lastPNG.type==="image/png" };
+
+    const pixelCounts={}; SOURCES.forEach(s=>pixelCounts[s.name]=0);
+    for(let i=0;i<N*N;i++) if(sourceIndex[i]>=0) pixelCounts[datasets[sourceIndex[i]].src.name]++;
+    const usedNames=Object.keys(pixelCounts).filter(k=>pixelCounts[k]>0);
+    const mixed=usedNames.length>1;
+
+    lastJSON=JSON.stringify({
+      application:"GSI DEM Downloader",version:"1.4-mixed-source",
+      center:{lat:clat,lon:clon},bounds:b,side_m:L,
+      output:{ width:N,height:N,meters_per_pixel:mpp, format:"PNG RGBA 8-bit (grayscale + alpha)",
+        theotown_mapping:{ levels:THEO_LEVELS, elevation_min_m:dynMinElev, elevation_max_m:dynMaxElev, highest_real_gray:THEO_MAX_GRAY, nodata:"transparent alpha=0",
+          lowest_land_gray:THEO_LAND_MIN_GRAY, water_gray:THEO_NODATA_GRAY, water_gap_closed_cells:waterGapClosed,
+          valid_gray_values:Array.from({length:THEO_LEVELS},(_,k)=>Math.round(THEO_LAND_MIN_GRAY+k*(THEO_MAX_GRAY-THEO_LAND_MIN_GRAY)/(THEO_LEVELS-1))) } },
+      dem:{selection_priority:demMode==="1a" ? "DEM1A (z17) > DEM5A/B/C (z15) > DEM10B (z14)" : "DEM5A/B/C (z15) > DEM10B (z14)  [DEM1A不使用:5Aから選択]",dem_mode:demMode,mixed,used_sources:usedNames,pixel_counts:pixelCounts},
+      nodata:"GSI NoData and unavailable source areas are never treated as 0m; they remain transparent NoData.",
+      resampling:"geographic sampling with bilinear interpolation in global pixel space; NoData excluded from interpolation",
+      inspection, elevation_range_m:{min:vmin,max:vmax},
+      validation:{dimensions_ok:true,geographic_square_ok:true,valid_output_pixels:validCount,total_output_pixels:N*N,
+        output_coverage_percent:validCount/(N*N)*100,probe_coverage_percent:probePct,
+        tiles:datasets.map(d=>({source:d.src.name,zoom:d.src.z,required:d.tiles.length,usable:d.mapTiles.size,unavailable:d.unavailable,invalid:d.bad}))},
+      created_at:new Date().toISOString()
+    },null,2);
+
+    if(!sameRange(startRange,currentRange())){
+      lastPNG=null; lastJSON=null; lastHeights=null;
+      stopDotAnimation();
+      setSimpleStatus("処理中に範囲またはサイズが変更されたため、結果を破棄しました。もう一度「PNG を作成」を押してください。",0);
+      pngBtnEl.disabled=false;
+      return;
+    }
+    lastRun=startRange;
+    lastHeights=hts; lastHeightsN=N;
+
+    const blankRatePct=100-validCount/(N*N)*100;
+    usedDemLineEl.textContent=usedNames.join(" + ");
+    mixedLineEl.textContent=mixed?"あり":"なし";
+    elevRangeLineEl.textContent=`${vmin.toFixed(1)} ～${vmax.toFixed(1)} m`;
+    outputLineEl.textContent=`${N}×${N}`;
+    mppLineEl.textContent=`約${mpp.toFixed(1)}m`;
+    validLineEl.textContent=`${validCount.toLocaleString()} /${(N*N).toLocaleString()}px`;
+    nodataLineEl.textContent=`${(N*N-validCount).toLocaleString()} /${(N*N).toLocaleString()}px`;
+    validPctLineEl.textContent=`${(100-blankRatePct).toFixed(1)}%`;
+    blankPctLineEl.textContent=`${blankRatePct.toFixed(1)}%`;
+    tileBoxEl.innerHTML=datasets.map(tileRowHTML).join("");
+
+    progress(100);
+    stopDotAnimation();
+    showReportView();
+
+    pngBtnEl.disabled=false; zipBtnEl.disabled=false; cliffBtnEl.disabled=!lastHeights;
+  }catch(e){
+    console.error(e);
+    stopDotAnimation();
+    setSimpleStatus("処理失敗: "+(e?.message||String(e)));
+    progress(0);
+    pngBtnEl.disabled=false;
+  }finally{
+    isRunning = false;
+  }
+}
+pngBtnEl.addEventListener("click",()=>{ run(); });
+
+/* ===================== ZIP 保存 (store 方式) ===================== */
+const CRC_TABLE=(()=>{ const t=new Uint32Array(256); for(let n=0;n<256;n++){ let c=n; for(let k=0;k<8;k++){ c=c&1?(0xEDB88320^(c>>>1)):(c>>>1); } t[n]=c>>>0; } return t; })();
+function crc32(buf){ let c=0xFFFFFFFF; for(let i=0;i<buf.length;i++){ c=CRC_TABLE[(c^buf[i])&0xFF]^(c>>>8); } return (c^0xFFFFFFFF)>>>0; }
+function dosDateTime(d=new Date()){
+  const time=((d.getHours()&0x1F)<<11)|((d.getMinutes()&0x3F)<<5)|((d.getSeconds()>>1)&0x1F);
+  const date=(((d.getFullYear()-1980)&0x7F)<<9)|(((d.getMonth()+1)&0xF)<<5)|(d.getDate()&0x1F);
+  return {time,date};
+}
+function createZip(files){
+  const encoder=new TextEncoder();
+  const {time,date}=dosDateTime();
+  const localParts=[], centralParts=[]; let offset=0;
+  const UTF8_FLAG=0x0800;
+  for(const f of files){
+    const nameBytes=encoder.encode(f.name);
+    const data=f.data;
+    const crc=crc32(data);
+    const size=data.length;
+    const localHeader=new Uint8Array(30+nameBytes.length);
+    const lv=new DataView(localHeader.buffer);
+    lv.setUint32(0,0x04034b50,true); lv.setUint16(4,20,true); lv.setUint16(6,UTF8_FLAG,true); lv.setUint16(8,0,true);
+    lv.setUint16(10,time,true); lv.setUint16(12,date,true); lv.setUint32(14,crc,true);
+    lv.setUint32(18,size,true); lv.setUint32(22,size,true);
+    lv.setUint16(26,nameBytes.length,true); lv.setUint16(28,0,true);
+    localHeader.set(nameBytes,30);
+    localParts.push(localHeader,data);
+
+    const centralHeader=new Uint8Array(46+nameBytes.length);
+    const cv=new DataView(centralHeader.buffer);
+    cv.setUint32(0,0x02014b50,true); cv.setUint16(4,20,true); cv.setUint16(6,20,true); cv.setUint16(8,UTF8_FLAG,true); cv.setUint16(10,0,true);
+    cv.setUint16(12,time,true); cv.setUint16(14,date,true); cv.setUint32(16,crc,true);
+    cv.setUint32(20,size,true); cv.setUint32(24,size,true);
+    cv.setUint16(28,nameBytes.length,true); cv.setUint16(30,0,true); cv.setUint16(32,0,true); cv.setUint16(34,0,true);
+    cv.setUint16(36,0,true); cv.setUint32(38,0,true); cv.setUint32(42,offset,true);
+    centralHeader.set(nameBytes,46);
+    centralParts.push(centralHeader);
+    offset+=localHeader.length+data.length;
+  }
+  const centralSize=centralParts.reduce((s,p)=>s+p.length,0);
+  const centralOffset=offset;
+  const end=new Uint8Array(22);
+  const ev=new DataView(end.buffer);
+  ev.setUint32(0,0x06054b50,true); ev.setUint16(4,0,true); ev.setUint16(6,0,true);
+  ev.setUint16(8,files.length,true); ev.setUint16(10,files.length,true);
+  ev.setUint32(12,centralSize,true); ev.setUint32(16,centralOffset,true); ev.setUint16(20,0,true);
+  return new Blob([...localParts,...centralParts,end],{type:"application/zip"});
+}
+zipBtnEl.addEventListener("click",async ()=>{
+  if(!lastPNG||!lastJSON) return;
+  const pngBuf=new Uint8Array(await lastPNG.arrayBuffer());
+  const jsonBuf=new TextEncoder().encode(lastJSON);
+  const n=lastRun ? lastRun.size : currentSize;
+  const folder=`gsi_dem_${n}x${n}`;
+  const zipBlob=createZip([
+    {name:`${folder}/${folder}.png`,data:pngBuf},
+    {name:`${folder}/info.json`,data:jsonBuf}
+  ]);
+  downloadBlob(zipBlob,`${folder}.zip`);
+});
+function downloadBlob(blob,name){
+  const u=URL.createObjectURL(blob),a=document.createElement("a");a.href=u;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),1000);
+}
+
+/* ===================== 崖プラグイン出力 (v13-1) ===================== */
+// 高さ表から「隣より3段以上低いマス」を探し、そのマスに壁decorationを置くプラグインを作る。
+// 壁は低い側のマスの奥側の縁に立つ。奥側2辺はカメラ回転(frame)で変わるため、1マスに4辺ぶんの落差を持たせ、
+// frame0〜3の絵を切り替える(実機確認済みの向き:frame0=西L/南R, 1=南L/東R, 2=東L/北R, 3=北L/西R)。
+function cliffHash(x,y){ return (((x*73856093)^(y*19349663))>>>0)%16; }
+function wallCanvas(a,b){ // a=左半分(L型)の落差, b=右半分(R型)の落差
+  const cv=document.createElement("canvas"); cv.width=WALL_W; cv.height=WALL_H;
+  const cx=cv.getContext("2d"), im=cx.createImageData(WALL_W,WALL_H);
+  const yL=WALL_H-WALL_PAD-8; // タイルの左右頂点のy(最下頂点=WALL_H-WALL_PAD)
+  for(let y=0;y<WALL_H;y++) for(let x=0;x<WALL_W;x++){
+    const left=x<16, d=left?a:b;
+    if(!d) continue;
+    const edge=left ? yL-(x+0.5)/2 : yL-8+(x+0.5-16)/2; // 縁の線のy
+    const e=d*WALL_STEP_PX, yc=y+0.5;
+    if(yc<edge-e || yc>=edge+1) continue;
+    let r,g,bb;
+    if(yc<edge-e+2){ r=88; g=122; bb=58; }            // 上端:草の縁
+    else{
+      const base=left?[152,114,74]:[112,82,52];       // L型は明るく、R型は暗く
+      const strata=(Math.floor((edge-yc)/6)%3===0)?-10:0;
+      const n=cliffHash(x,y)-8;
+      r=base[0]+strata+n; g=base[1]+strata+n; bb=base[2]+strata+n;
+    }
+    const p=(y*WALL_W+x)*4;
+    im.data[p]=Math.max(0,Math.min(255,r)); im.data[p+1]=Math.max(0,Math.min(255,g)); im.data[p+2]=Math.max(0,Math.min(255,bb)); im.data[p+3]=255;
+  }
+  cx.putImageData(im,0,0);
+  return cv;
+}
+function canvasPngBytes(cv){
+  return new Promise((res,rej)=>cv.toBlob(async b=>{ if(!b) return rej(new Error("壁PNGの生成に失敗")); res(new Uint8Array(await b.arrayBuffer())); },"image/png"));
+}
+function findCliffEdges(Hts,N){
+  // 表(高さ表)で隣より CLIFF_STEPS 段以上高いマス→低いマスの組(辺)を全部拾う。表は「崖の位置」と「どちらが高い側か」を決めるためだけに使う。
+  const DIRS=[[-1,0],[0,-1],[1,0],[0,1]];
+  const edges=[], hi=new Set(), lo=new Set(); let land=0;
+  for(let y=0;y<N;y++) for(let x=0;x<N;x++){
+    const h=Hts[y*N+x]; if(h>0) land++;
+    for(let k=0;k<4;k++){
+      const nx=x+DIRS[k][0], ny=y+DIRS[k][1];
+      if(nx<0||ny<0||nx>=N||ny>=N) continue;
+      if(h-Hts[ny*N+nx]>=CLIFF_STEPS){ edges.push([x,y,nx,ny]); hi.add(y*N+x); lo.add(ny*N+nx); }
+    }
+  }
+  const touched=new Set([...hi,...lo]); let landTouched=0;
+  for(const i of touched) if(Hts[i]>0) landTouched++;
+  return {edges, highTiles:hi.size, lowTiles:lo.size, land, landTouched};
+}
+function wallCombos(){
+  // 壁decorationの全種類:(西,北,東,南)の落差(0〜WALL_MAX_DROP)のうち、0でない辺が1〜2個のもの。
+  // 実際の落差はゲーム側の高さで決まる(生成時には分からない)ので、取りうる組合せを全部用意し、Luaが名前で選ぶ。
+  const out=[]; const M=WALL_MAX_DROP;
+  for(let a=0;a<=M;a++) for(let b=0;b<=M;b++) for(let c=0;c<=M;c++) for(let d=0;d<=M;d++){
+    const nz=(a>0)+(b>0)+(c>0)+(d>0);
+    if(nz>=1&&nz<=2) out.push([a,b,c,d]);
+  }
+  return out;
+}
+function cliffLua(Hts,N,cl,PID){
+  const rows=[];
+  for(let y=0;y<N;y++){ let r=""; for(let x=0;x<N;x++) r+=Hts[y*N+x].toString(16); rows.push(JSON.stringify(r)); }
+  const pct=cl.land?(100*cl.landTouched/cl.land).toFixed(1):"0";
+  return `-- GSI DEM Downloader v13-10 : cliff plugin (generated)
+-- The table is used only to FIND cliffs (where, which side is higher).
+-- Heights are taken from the game's own terrain: ramps next to a cliff are flattened to the
+-- game's top / bottom level and a wall is built between them. Table cliff edges: ${cl.edges.length}, cliff tiles ${pct}% of land.
+-- Apply once on the matching ${N}x${N} city, then remove this plugin.
+local N = ${N}
+local R = ${CLIFF_WALK}
+local MAXD = ${WALL_MAX_DROP}
+local MING = ${CLIFF_MIN_GAME}
+local ROUNDS = ${CLIFF_ROUNDS}
+local SLIV = ${CLIFF_SLIVER}
+local PID = "${PID}"
+local DONE = false
+local ROWS = {
+${rows.join(",\n")}
+}
+local EDGES = [[
+${cl.edges.map(e=>e.join(",")).join("\n")}
+]]
+
+-- byte of '0'-'9' (48-57) and 'a'-'f' (97-102) -> 0..15
+local HV = {}
+for i = 0, 9 do HV[48 + i] = i end
+for i = 0, 5 do HV[97 + i] = 10 + i end
+
+local DX = { -1, 0, 1, 0 } -- W, N, E, S
+local DY = { 0, -1, 0, 1 }
+
+local function log(s) pcall(function() Debug.log("[cliffwall] " .. s) end) end
+local function toast(s) pcall(function() Debug.toast(s) end) end
+
+local function gameH(x, y)
+  local ok, v = pcall(function() return Tile.getTerrainHeight(x, y) end)
+  if ok and type(v) == "number" then return v end
+  return nil
+end
+
+local function gameLand(x, y)
+  local ok, v = pcall(function() return Tile.isLand(x, y) end)
+  if ok then return v end
+  return nil
+end
+
+local function sizeMatches()
+  local ok, w = pcall(function() return City.getWidth() end)
+  if ok and type(w) == "number" and w ~= N then
+    log("city width " .. tostring(w) .. " ~= " .. N .. " : skipped")
+    return false
+  end
+  return true
+end
+
+local function inb(x, y) return x >= 0 and y >= 0 and x < N and y < N end
+local function round(v) return math.floor(v + 0.5) end
+
+local function apply()
+  if DONE then return end
+  DONE = true
+  if not sizeMatches() then return end
+  -- apply only once per city: the flag lives in the city's own storage table (saved with the city)
+  local store = nil
+  pcall(function() store = City.getStorage() end)
+  if type(store) == "table" and store.cliffwall_done == PID then
+    log("already applied (city storage flag): skipped")
+    toast("cliffwall: already applied")
+    return
+  end
+  log("v13-10 start: rows=" .. #ROWS .. " N=" .. N .. " R=" .. R .. " minGameDrop=" .. MING .. " rounds=" .. ROUNDS .. " sliver=" .. SLIV .. " storage=" .. type(store))
+
+  -- 1) read the game's own terrain BEFORE writing anything (+ per table level statistics)
+  local G, GI, LAND, G0 = {}, {}, {}, {}
+  local lvN, lvSum, lvMin, lvMax = {}, {}, {}, {}
+  local unreadable, landCount = 0, 0
+  for y = 0, N - 1 do
+    local line = ROWS[y + 1] or ""
+    for x = 0, N - 1 do
+      local i = y * N + x
+      local g = gameH(x, y)
+      if g == nil then unreadable = unreadable + 1; g = 0 end
+      local l = gameLand(x, y)
+      local isL
+      if l == nil then isL = g > 0 else isL = l end
+      G[i] = g; GI[i] = round(g); LAND[i] = isL; G0[i] = g
+      if isL then landCount = landCount + 1 end
+      local tv = HV[string.byte(line, x + 1)] or 0
+      lvN[tv] = (lvN[tv] or 0) + 1
+      lvSum[tv] = (lvSum[tv] or 0) + g
+      if lvMin[tv] == nil or g < lvMin[tv] then lvMin[tv] = g end
+      if lvMax[tv] == nil or g > lvMax[tv] then lvMax[tv] = g end
+    end
+  end
+  log("game terrain read: land=" .. landCount .. " unreadable=" .. unreadable)
+  for tv = 0, 15 do
+    if lvN[tv] then
+      log("level " .. tv .. ": n=" .. lvN[tv] .. " meanGame=" .. string.format("%.2f", lvSum[tv] / lvN[tv]) .. " min=" .. string.format("%.2f", lvMin[tv]) .. " max=" .. string.format("%.2f", lvMax[tv]))
+    end
+  end
+
+  -- 2) cliff edges from the table: flatten the ramp on both sides to the game's top / bottom level
+  local role, val, coastLow = {}, {}, {}
+  local C = { edges = 0, skipWater = 0, flat = 0, capped = 0, conflict = 0, noLow = 0, conflictSkip = 0 }
+  local HIST = { 0, 0, 0, 0, 0, 0, 0 }
+  local hiSet, loSet, hiN, loN = {}, {}, 0, 0
+
+  local function propose(i, r, v)
+    local cur = role[i]
+    if cur == nil then
+      role[i] = r; val[i] = v
+    elseif cur == r then
+      if r == "H" then
+        if v > val[i] then val[i] = v end
+      else
+        if v < val[i] then val[i] = v end
+      end
+    else
+      C.conflict = C.conflict + 1 -- keep the first role
+    end
+  end
+
+  local function handleEdge(hx, hy, lx, ly)
+    C.edges = C.edges + 1
+    local ai, bi = hy * N + hx, ly * N + lx
+    if not hiSet[ai] then hiSet[ai] = true; hiN = hiN + 1 end
+    if not loSet[bi] then loSet[bi] = true; loN = loN + 1 end
+    if not LAND[ai] then C.skipWater = C.skipWater + 1; return end
+    local dx, dy = hx - lx, hy - ly
+    -- high side: walk away from the cliff over land, remember the highest game level
+    local hs, top = {}, -1
+    if role[ai] == "L" then
+      top = val[ai] -- already fixed as a lower level by another cliff: keep it, write nothing on this side
+    else
+      for s = 0, R - 1 do
+        local x, y = hx + dx * s, hy + dy * s
+        if not inb(x, y) then break end
+        local i = y * N + x
+        if not LAND[i] then break end
+        if role[i] ~= nil and role[i] ~= "H" then break end
+        hs[#hs + 1] = i
+        if GI[i] > top then top = GI[i] end
+      end
+    end
+    -- low side: a water tile (coast) is level 0 and is not written; land: walk away, remember the lowest level
+    local ls, bot = {}, nil
+    if not LAND[bi] then
+      bot = 0
+      coastLow[bi] = true
+    elseif role[bi] == "H" then
+      bot = val[bi] -- already fixed as an upper level by another cliff: keep it, write nothing on this side
+    else
+      for s = 0, R - 1 do
+        local x, y = lx - dx * s, ly - dy * s
+        if not inb(x, y) then break end
+        local i = y * N + x
+        if not LAND[i] then break end
+        if role[i] ~= nil and role[i] ~= "L" then break end
+        ls[#ls + 1] = i
+        if bot == nil or GI[i] < bot then bot = GI[i] end
+      end
+    end
+    if #hs == 0 and role[ai] ~= "L" then C.conflictSkip = C.conflictSkip + 1; return end
+    if bot == nil then C.noLow = C.noLow + 1; return end
+    local raw = top - bot
+    local hb = raw
+    if hb < 0 then hb = 0 end
+    if hb > 6 then hb = 6 end
+    HIST[hb + 1] = HIST[hb + 1] + 1
+    if raw < MING then C.flat = C.flat + 1; return end
+    local d = raw
+    if d > MAXD then d = MAXD; C.capped = C.capped + 1 end
+    local hv = bot + d
+    for _, i in ipairs(hs) do propose(i, "H", hv) end
+    for _, i in ipairs(ls) do propose(i, "L", bot) end
+  end
+
+  for a, b, c, d in string.gmatch(EDGES, "(%d+),(%d+),(%d+),(%d+)") do
+    handleEdge(tonumber(a), tonumber(b), tonumber(c), tonumber(d))
+  end
+  local touchedLand = 0
+  for i in pairs(hiSet) do if LAND[i] then touchedLand = touchedLand + 1 end end
+  for i in pairs(loSet) do if LAND[i] and not hiSet[i] then touchedLand = touchedLand + 1 end end
+  local ratio = 0
+  if landCount > 0 then ratio = 100 * touchedLand / landCount end
+  log("edges: n=" .. C.edges .. " highTiles=" .. hiN .. " lowTiles=" .. loN .. " cliffLand=" .. touchedLand .. "/" .. landCount .. " (" .. string.format("%.1f", ratio) .. "%)")
+  log("edges: skipHighWater=" .. C.skipWater .. " belowMin(flat)=" .. C.flat .. " capped=" .. C.capped .. " noLow=" .. C.noLow .. " roleClashSkip=" .. C.conflictSkip .. " roleConflict=" .. C.conflict)
+  log("edge game-drop histogram (top-bottom in game steps): 0:" .. HIST[1] .. " 1:" .. HIST[2] .. " 2:" .. HIST[3] .. " 3:" .. HIST[4] .. " 4:" .. HIST[5] .. " 5:" .. HIST[6] .. " 6+:" .. HIST[7])
+
+  -- 3) write the flattened heights
+  local written, setN, err, proposals = {}, 0, nil, 0
+  for i in pairs(role) do
+    proposals = proposals + 1
+    local x = i % N
+    local y = math.floor(i / N)
+    local ok, e = pcall(function() Builder.setTerrainHeight(x, y, val[i]) end)
+    if ok then setN = setN + 1; written[i] = true elseif not err then err = tostring(e) end
+  end
+  log("heights: proposals=" .. proposals .. " set=" .. setN .. (err and (" ERR " .. err) or ""))
+
+  local function Hf(i)
+    if written[i] then return val[i] end
+    if LAND[i] then return GI[i] end
+    return 0
+  end
+
+  -- live height of an unwritten tile (re-read from the game, falls back to the value read before writing)
+  local function cur(ni)
+    local v = gameH(ni % N, math.floor(ni / N))
+    if v == nil then v = G[ni] end
+    return v
+  end
+
+  -- diagnostic: how far does the game's own reshaping spread? Compare EVERY unwritten tile before / after the writes,
+  -- grouped by (4-neighbour) distance from the nearest written tile; land tiles split into coastal / inland.
+  local function spreadDiag(label)
+    local dist, queue, qh = {}, {}, 1
+    for i in pairs(written) do dist[i] = 0; queue[#queue + 1] = i end
+    while qh <= #queue do
+      local i = queue[qh]
+      qh = qh + 1
+      local d = dist[i]
+      if d < 12 then
+        local x = i % N
+        local y = math.floor(i / N)
+        for k = 1, 4 do
+          local nx, ny = x + DX[k], y + DY[k]
+          if inb(nx, ny) then
+            local ni = ny * N + nx
+            if dist[ni] == nil then dist[ni] = d + 1; queue[#queue + 1] = ni end
+          end
+        end
+      end
+    end
+    local tot, chg, totC, chgC, maxd = {}, {}, {}, {}, {}
+    for d = 1, 13 do tot[d] = 0; chg[d] = 0; totC[d] = 0; chgC[d] = 0; maxd[d] = 0 end
+    local waterChg, waterTot = 0, 0
+    for i = 0, N * N - 1 do
+      if not written[i] then
+        local delta = math.abs(cur(i) - G0[i])
+        local changed = delta >= 0.25
+        if not LAND[i] then
+          waterTot = waterTot + 1
+          if changed then waterChg = waterChg + 1 end
+        else
+          local d = dist[i]
+          if d == nil or d > 12 then d = 13 end
+          if d >= 1 then
+            local x = i % N
+            local y = math.floor(i / N)
+            local coastal = false
+            for k = 1, 4 do
+              local nx, ny = x + DX[k], y + DY[k]
+              if inb(nx, ny) and not LAND[ny * N + nx] then coastal = true end
+            end
+            tot[d] = tot[d] + 1
+            if coastal then totC[d] = totC[d] + 1 end
+            if changed then
+              chg[d] = chg[d] + 1
+              if coastal then chgC[d] = chgC[d] + 1 end
+              if delta > maxd[d] then maxd[d] = delta end
+            end
+          end
+        end
+      end
+    end
+    log(label .. " (unwritten land tiles, changed = |after-before| >= 0.25, by distance from written tiles)")
+    for d = 1, 13 do
+      if tot[d] > 0 then
+        log("  dist " .. (d == 13 and "13+" or tostring(d)) .. ": changed=" .. chg[d] .. "/" .. tot[d] .. " coastal=" .. chgC[d] .. "/" .. totC[d] .. " inland=" .. (chg[d] - chgC[d]) .. "/" .. (tot[d] - totC[d]) .. " maxDelta=" .. string.format("%.2f", maxd[d]))
+      end
+    end
+    log("  water tiles changed=" .. waterChg .. "/" .. waterTot)
+  end
+
+  -- diagnostic: does an unwritten slope tile beside a written (flat) tile change shape after the write?
+  do
+    local seen, tot, chg, ex = {}, 0, 0, {}
+    for i in pairs(written) do
+      local x = i % N
+      local y = math.floor(i / N)
+      for k = 1, 4 do
+        local nx, ny = x + DX[k], y + DY[k]
+        if inb(nx, ny) then
+          local ni = ny * N + nx
+          if (not written[ni]) and LAND[ni] and not seen[ni] then
+            seen[ni] = true
+            tot = tot + 1
+            local c = cur(ni)
+            if math.abs(c - G[ni]) >= 0.25 then
+              chg = chg + 1
+              if #ex < 6 then ex[#ex + 1] = nx .. "," .. ny .. " before=" .. string.format("%.2f", G[ni]) .. " after=" .. string.format("%.2f", c) end
+            end
+          end
+        end
+      end
+    end
+    log("neighbor adaptation after write: unwrittenNeighbors=" .. tot .. " changed(>=0.25)=" .. chg)
+    for _, e in ipairs(ex) do log("adapt " .. e) end
+  end
+
+  spreadDiag("spread after first write")
+
+  -- 2b) an unwritten slope tile beside a written (flat) tile that is lower than it by a step, or differs by a fraction (>= SLIV),
+  --     cannot get a wall (building on a slope flattens it) and leaves a gap: write it flat at its own rounded height.
+  --     Uses live readings, so if the game reshapes the neighbours by itself nothing more is written. At most ROUNDS rounds.
+  local extraN = 0
+  for rd = 1, ROUNDS do
+    local add = {}
+    for i in pairs(written) do
+      local x = i % N
+      local y = math.floor(i / N)
+      local h = Hf(i)
+      for k = 1, 4 do
+        local nx, ny = x + DX[k], y + DY[k]
+        if inb(nx, ny) then
+          local ni = ny * N + nx
+          if (not written[ni]) and LAND[ni] and add[ni] == nil then
+            local c = cur(ni)
+            local ci = round(c)
+            if ci - h < 1 and math.abs(h - c) >= SLIV then add[ni] = ci end
+          end
+        end
+      end
+    end
+    local cnt = 0
+    for ni, v in pairs(add) do
+      local x = ni % N
+      local y = math.floor(ni / N)
+      local ok, e = pcall(function() Builder.setTerrainHeight(x, y, v) end)
+      if ok then written[ni] = true; val[ni] = v; cnt = cnt + 1; extraN = extraN + 1 elseif not err then err = tostring(e) end
+    end
+    log("flatten round " .. rd .. ": tiles=" .. cnt)
+    if cnt == 0 then break end
+  end
+
+  -- refresh the heights of the unwritten tiles beside written ones (they may have been reshaped by the writes)
+  for i in pairs(written) do
+    local x = i % N
+    local y = math.floor(i / N)
+    for k = 1, 4 do
+      local nx, ny = x + DX[k], y + DY[k]
+      if inb(nx, ny) then
+        local ni = ny * N + nx
+        if (not written[ni]) and LAND[ni] then
+          local c = cur(ni)
+          G[ni] = c; GI[ni] = round(c)
+        end
+      end
+    end
+  end
+
+  -- diagnostic: what is left (live readings): written tile vs unwritten slope tile, |diff| >= 0.25 and no wall possible
+  local sliverLow, sliverHigh = 0, 0
+  for i in pairs(written) do
+    local x = i % N
+    local y = math.floor(i / N)
+    for k = 1, 4 do
+      local nx, ny = x + DX[k], y + DY[k]
+      if inb(nx, ny) then
+        local ni = ny * N + nx
+        if (not written[ni]) and LAND[ni] then
+          local d = Hf(i) - G[ni]
+          if d >= 0.25 then sliverLow = sliverLow + 1
+          elseif d <= -0.25 and GI[ni] - Hf(i) < 1 then sliverHigh = sliverHigh + 1 end
+        end
+      end
+    end
+  end
+  log("sliver steps left (live): slopeLower=" .. sliverLow .. " slopeHigher=" .. sliverHigh)
+  spreadDiag("spread after flatten rounds")
+
+  -- verify: read back every written tile
+  local checked, mism, msamples = 0, 0, {}
+  for i in pairs(written) do
+    local r = gameH(i % N, math.floor(i / N))
+    if r then
+      checked = checked + 1
+      if math.abs(r - val[i]) > 0.01 then
+        mism = mism + 1
+        if #msamples < 8 then msamples[#msamples + 1] = (i % N) .. "," .. math.floor(i / N) .. " want=" .. val[i] .. " game=" .. string.format("%.2f", r) end
+      end
+    end
+  end
+  log("verify after write: checked=" .. checked .. " (extra flattened=" .. extraN .. ") mismatch=" .. mism)
+  for _, sm in ipairs(msamples) do log("mismatch " .. sm) end
+
+  if proposals > 0 and setN == 0 then
+    log("no heights were written: walls skipped")
+    toast("cliffwall: no heights written, walls skipped")
+    return
+  end
+
+  -- steps from a written tile down to an UNWRITTEN land tile cannot get a wall (building on a slope flattens it)
+  local unwalled = 0
+  for i in pairs(written) do
+    local x = i % N
+    local y = math.floor(i / N)
+    for k = 1, 4 do
+      local nx, ny = x + DX[k], y + DY[k]
+      if inb(nx, ny) then
+        local ni = ny * N + nx
+        if (not written[ni]) and LAND[ni] and Hf(i) - Hf(ni) >= 1 then unwalled = unwalled + 1 end
+      end
+    end
+  end
+
+  -- 4) walls on the lower side of every step (written land tiles, and water tiles next to a cliff)
+  for i in pairs(written) do
+    if Hf(i) >= 1 then
+      local x = i % N
+      local y = math.floor(i / N)
+      for k = 1, 4 do
+        local nx, ny = x + DX[k], y + DY[k]
+        if inb(nx, ny) then
+          local ni = ny * N + nx
+          if not LAND[ni] then coastLow[ni] = true end
+        end
+      end
+    end
+  end
+  local cand = {}
+  for i in pairs(written) do cand[i] = true end
+  for i in pairs(coastLow) do cand[i] = true end
+  local buildTrue, buildFalse, buildNil, buildErr, berr, droppedDirs, wallTiles = 0, 0, 0, 0, nil, 0, 0
+  local PLANNED, BUILTOK, DROPPED = {}, {}, {}
+  local falseSamples = 0
+  for i in pairs(cand) do
+    local x = i % N
+    local y = math.floor(i / N)
+    local h = Hf(i)
+    local t = { 0, 0, 0, 0 }
+    local nz = 0
+    for k = 1, 4 do
+      local nx, ny = x + DX[k], y + DY[k]
+      if inb(nx, ny) then
+        local ni = ny * N + nx
+        local use = true
+        if (not LAND[i]) and not written[ni] then use = false end
+        if use then
+          local diff = Hf(ni) - h
+          if diff >= 1 then
+            if diff > MAXD then diff = MAXD end
+            t[k] = diff; nz = nz + 1
+          end
+        end
+      end
+    end
+    if nz > 2 then
+      local order = { 1, 2, 3, 4 }
+      table.sort(order, function(a, b)
+        if t[a] ~= t[b] then return t[a] > t[b] end
+        return a < b
+      end)
+      local dr = {}
+      if t[order[3]] > 0 then dr[order[3]] = true end
+      if t[order[4]] > 0 then dr[order[4]] = true end
+      DROPPED[i] = dr
+      t[order[3]] = 0; t[order[4]] = 0
+      droppedDirs = droppedDirs + 1
+      nz = 2
+    end
+    if nz > 0 then
+      wallTiles = wallTiles + 1
+      local coast = not LAND[i]
+      local id = PID .. "_" .. t[1] .. t[2] .. t[3] .. t[4] .. (coast and "c" or "i")
+      PLANNED[i] = { t[1], t[2], t[3], t[4], id }
+      local ok, res = pcall(function() return Builder.buildBuilding(id, x, y, 0) end)
+      if ok and res == true then
+        buildTrue = buildTrue + 1; BUILTOK[i] = true
+      elseif ok and res == false then
+        buildFalse = buildFalse + 1
+        if falseSamples < 6 then
+          falseSamples = falseSamples + 1
+          local okQ, q = pcall(function() return Builder.isBuildingBuildable(id, x, y) end)
+          log("buildBuilding returned false: id=" .. id .. " at " .. x .. "," .. y .. " isBuildingBuildable=" .. tostring(okQ and q))
+        end
+      elseif ok then
+        buildNil = buildNil + 1
+      else
+        buildErr = buildErr + 1
+        if not berr then berr = tostring(res) .. " id=" .. id end
+      end
+    end
+  end
+  log("walls: tiles=" .. wallTiles .. " buildTrue=" .. buildTrue .. " buildFalse=" .. buildFalse .. " buildNil=" .. buildNil .. " error=" .. buildErr .. " droppedExtraDirs=" .. droppedDirs .. " unwalledStepsToSlope=" .. unwalled .. (berr and (" ERR " .. berr) or ""))
+
+  -- read back: is there really a building on every planned wall tile, and is it the planned draft?
+  do
+    local present, match, known, samples = 0, 0, 0, 0
+    for i, pl in pairs(PLANNED) do
+      local x = i % N
+      local y = math.floor(i / N)
+      local okB, isB = pcall(function() return Tile.isBuilding(x, y) end)
+      if okB and isB then
+        present = present + 1
+        local okD, got = pcall(function()
+          local d = Tile.getBuildingDraft(x, y)
+          if d == nil then return nil end
+          local okI, idv = pcall(function() return d:getId() end)
+          if okI and idv then return idv end
+          return tostring(d)
+        end)
+        if okD and type(got) == "string" then
+          if string.sub(got, 1, #PID) == PID then known = known + 1 end
+          if got == pl[5] then
+            match = match + 1
+          elseif samples < 6 then
+            samples = samples + 1
+            log("readback mismatch (" .. x .. "," .. y .. ") want=" .. pl[5] .. " got=" .. got)
+          end
+        end
+      end
+    end
+    log("readback: planned=" .. wallTiles .. " isBuilding=" .. present .. " idMatch=" .. match .. " idStartsWithPlugin=" .. known)
+  end
+
+  -- final audit: every pair of neighbouring tiles that are both flat and differ by >= 1 step needs a wall on the lower tile
+  do
+    local LH, FL = {}, {}
+    for i = 0, N * N - 1 do
+      local x = i % N
+      local y = math.floor(i / N)
+      LH[i] = cur(i)
+      local okF, f = pcall(function() return Tile.isFlat(x, y) end)
+      if okF then FL[i] = f else FL[i] = math.abs(LH[i] - round(LH[i])) < 0.001 end
+    end
+    local OPP = { 3, 4, 1, 2 }
+    local steps, covered, gapSlope = 0, 0, 0
+    local why = { noWall = 0, dirDropped = 0, planZero = 0, buildFailed = 0, dropMismatch = 0 }
+    local samples = {}
+    for i = 0, N * N - 1 do
+      local x = i % N
+      local y = math.floor(i / N)
+      for k = 3, 4 do
+        local nx, ny = x + DX[k], y + DY[k]
+        if inb(nx, ny) then
+          local ni = ny * N + nx
+          if FL[i] and FL[ni] then
+            local diff = round(LH[ni]) - round(LH[i])
+            if diff ~= 0 then
+              steps = steps + 1
+              local L, H, kd, dabs
+              if diff > 0 then L = i; H = ni; kd = k; dabs = diff else L = ni; H = i; kd = OPP[k]; dabs = -diff end
+              local pl = PLANNED[L]
+              local reason = nil
+              if pl == nil then reason = "noWall"
+              elseif DROPPED[L] and DROPPED[L][kd] then reason = "dirDropped"
+              elseif pl[kd] == 0 then reason = "planZero"
+              elseif not BUILTOK[L] then reason = "buildFailed"
+              else
+                local want = dabs
+                if want > MAXD then want = MAXD end
+                if pl[kd] ~= want then reason = "dropMismatch" end
+              end
+              if reason == nil then
+                covered = covered + 1
+              else
+                why[reason] = why[reason] + 1
+                if reason == "noWall" and #samples < 6 then
+                  samples[#samples + 1] = "L(" .. (L % N) .. "," .. math.floor(L / N) .. ") h=" .. string.format("%.1f", LH[L]) .. " written=" .. tostring(written[L] == true) .. " -> H(" .. (H % N) .. "," .. math.floor(H / N) .. ") h=" .. string.format("%.1f", LH[H])
+                end
+              end
+            end
+          elseif (FL[i] or FL[ni]) and math.abs(LH[i] - LH[ni]) >= 0.5 then
+            gapSlope = gapSlope + 1
+          end
+        end
+      end
+    end
+    log("final audit: flatFlatSteps=" .. steps .. " covered=" .. covered .. " noWall=" .. why.noWall .. " dirDropped=" .. why.dirDropped .. " planZero=" .. why.planZero .. " buildFailed=" .. why.buildFailed .. " dropMismatch=" .. why.dropMismatch .. " | flat-vs-slope gap>=0.5: " .. gapSlope)
+    for _, sm in ipairs(samples) do log("audit noWall " .. sm) end
+  end
+  if type(store) == "table" and setN > 0 then
+    local okF = pcall(function() store.cliffwall_done = PID end)
+    log("storage flag set: " .. tostring(okF))
+  end
+  toast("cliffwall: heights " .. setN .. " / walls " .. buildTrue)
+end
+
+function script:enterCity() apply() end
+function script:update() apply() end
+`;
+}
+async function makeCliffPlugin(){
+  const N=lastHeightsN, Hts=lastHeights;
+  const cl=findCliffEdges(Hts,N);
+  if(!cl.edges.length) throw new Error("崖(隣と"+CLIFF_STEPS+"段以上の差)がありません");
+  const PID="$cliffwall_gen";
+  const pairKeys=new Map(); // "a,b" -> file name
+  const drafts=[];
+  for(const coast of [false,true]) for(const t of wallCombos()){
+    const [W,Nn,E,S]=t;
+    const pairs=[[W,S],[S,E],[E,Nn],[Nn,W]]; // frame0〜3の(L型落差,R型落差)
+    const frames=pairs.map(([a,b])=>{
+      const pk=a+"_"+b;
+      if(!pairKeys.has(pk)) pairKeys.set(pk,`wall_L${a}_R${b}.png`);
+      return {bmp:pairKeys.get(pk)};
+    });
+    const d={ id:`${PID}_${t.join("")}${coast?"c":"i"}`, type:"decoration", title:`Cliff wall ${t.join("")}${coast?" (coast)":""}`, width:1, height:1,
+      frames, "rotation aware":true, "needs land":false, "needs water":false, price:0 };
+    if(!coast) d["draw ground"]=true; // 海岸側(足元は水のまま)には付けない
+    drafts.push(d);
+  }
+  const folder=`cliffwall_${N}x${N}`;
+  const enc=new TextEncoder();
+  const files=[];
+  files.push({name:`${folder}/plugin.manifest`,data:enc.encode(JSON.stringify({id:PID,author:"GSI DEM Downloader",version:1,title:`Cliff walls ${N}x${N}`,text:"Generated cliff heights and walls"},null,2))});
+  files.push({name:`${folder}/script.json`,data:enc.encode(JSON.stringify([{id:PID+"_script",type:"script",script:"cliff.lua"}],null,2))});
+  files.push({name:`${folder}/walls.json`,data:enc.encode(JSON.stringify(drafts))});
+  files.push({name:`${folder}/cliff.lua`,data:enc.encode(cliffLua(Hts,N,cl,PID))});
+  for(const [pk,fname] of pairKeys){
+    const [a,b]=pk.split("_").map(Number);
+    files.push({name:`${folder}/${fname}`,data:await canvasPngBytes(wallCanvas(a,b))});
+  }
+  const pct=cl.land?(100*cl.landTouched/cl.land).toFixed(1):"0";
+  return {zip:createZip(files), folder, edges:cl.edges.length, pct, drafts:drafts.length, images:pairKeys.size};
+}
+cliffBtnEl.addEventListener("click",async ()=>{
+  if(!lastHeights) return;
+  const orig=cliffBtnEl.textContent;
+  cliffBtnEl.disabled=true; cliffBtnEl.textContent="作成中…";
+  try{
+    await new Promise(r=>setTimeout(r,20));
+    const r=await makeCliffPlugin();
+    downloadBlob(r.zip,`${r.folder}.zip`);
+    cliffBtnEl.textContent=`崖${r.edges}辺/崖マス${r.pct}%/種類${r.drafts}/絵${r.images}`;
+    setTimeout(()=>{ cliffBtnEl.textContent=orig; },6000);
+  }catch(e){
+    console.error(e); cliffBtnEl.textContent="失敗: "+(e?.message||e);
+    setTimeout(()=>{ cliffBtnEl.textContent=orig; },6000);
+  }finally{ cliffBtnEl.disabled=!lastHeights; }
+});
+
+/* ===================== 状態をコピー(不具合報告用) ===================== */
+showInfoBtnEl.addEventListener("click",()=>{
+  const info = {
+    centerLat, centerLon, sideMeters:+sideEl.value, currentSize,
+    lockMode, lockStage, lockAnchor, lockEnd, pointBounds, lockPending, lockBounds, twoEdge,
+    axisFixedStart, axisFixedEnd, axisFixedSide,
+    mapStyle:currentStyleKey, lastMapError,
+    anchorPinStyle:{display:anchorPinEl.style.display, left:anchorPinEl.style.left, top:anchorPinEl.style.top},
+    endPinStyle:{display:endPinEl.style.display, left:endPinEl.style.left, top:endPinEl.style.top},
+    previewRectShow:previewRectEl.classList.contains("show"),
+    frameBounds:frameBoundsInMap(),
+    mapCenter:map.getCenter(), mapZoom:map.getZoom(), mapBearing:map.getBearing(),
+    lastRun
+  };
+  const text = JSON.stringify(info, null, 2);
+  const origLabel = showInfoBtnEl.textContent;
+  const showResult = label => { showInfoBtnEl.textContent = label; setTimeout(()=>{ showInfoBtnEl.textContent = origLabel; }, 1500); };
+  const fallbackCopy = () => {
+    try{
+      const ta = document.createElement("textarea");
+      ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      showResult(ok ? "コピーしました" : "コピー失敗");
+    }catch(e){ showResult("コピー失敗"); }
+  };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(()=>showResult("コピーしました")).catch(fallbackCopy);
+  }else{
+    fallbackCopy();
+  }
+});
+
+</script>
+</body>
+</html>
+
